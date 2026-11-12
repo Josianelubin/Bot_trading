@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Positions - KPS{% endblock %}
+{% block content %}
+{% for m in messages %}<p class="card"><strong>{{ m }}</strong></p>{% endfor %}
+<section class="card">
+  <h1>Positions et resultats</h1>
+  <p>Trades clotures : {{ stats.n }} - gagnants {{ stats.wins }} - perdants {{ stats.losses }}
+     {% if stats.rate is not None %}- reussite {{ stats.rate }}%{% endif %} - PNL net {{ stats.pnl|floatformat:2 }} USDT</p>
+  <form method="post">{% csrf_token %}<button>Synchroniser avec Gate</button></form>
+  {% for t in items %}
+  <hr>
+  <p><a href="{% url 'trade_approval:detail' t.pk %}">#{{ t.pk }} {{ t.symbol }} {{ t.direction }}</a> ({{ t.mode }})<br>
+    {% if t.exec_status == "open" %}EN COURS{% elif t.exec_status == "closed" %}
+      {% if t.net_pnl is None %}FERME - resultat a verifier sur Gate{% elif t.net_pnl > 0 %}GAGNANT{% else %}PERDANT{% endif %}
+    {% else %}ERREUR{% endif %}
+    - entree {{ t.fill_price|default_if_none:"-" }} - SL {{ t.stop_loss }} - TP {{ t.take_profit }} - x{{ t.leverage }}
+    {% if t.net_pnl is not None %}- PNL net {{ t.net_pnl|floatformat:2 }} USDT{% endif %}</p>
+  {% empty %}<p>Aucune position.</p>{% endfor %}
+</section>
+{% endblock %}

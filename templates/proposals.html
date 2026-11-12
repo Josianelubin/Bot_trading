@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Propositions - KPS{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Propositions de trades</h1>
+  {% for t in items %}
+  <p><a href="{% url 'trade_approval:detail' t.pk %}">#{{ t.pk }} {{ t.symbol }} {{ t.direction }}</a>
+     - entree {{ t.entry }} - statut {{ t.status }} / execution {{ t.exec_status }}</p>
+  {% empty %}<p>Aucune proposition pour le moment.</p>{% endfor %}
+</section>
+{% endblock %}

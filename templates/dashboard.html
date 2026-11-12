@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - KPS{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>KPS - Intelligent Gate.io Futures Trading Bot</h1>
+  <p>Phase 1 : socle technique operationnel.</p>
+  <ul>
+    <li>Mode actif : <strong>{{ KPS_MODE }}</strong></li>
+    <li>Marge : <strong>{{ KPS_MARGIN }}</strong></li>
+    <li>Connecte : {{ user.get_username }}</li>
+  </ul>
+</section>
+{% endblock %}

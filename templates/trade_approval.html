@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Trade #{{ p.pk }} - KPS{% endblock %}
+{% block content %}
+{% for m in messages %}<p class="card"><strong>{{ m }}</strong></p>{% endfor %}
+<section class="card">
+  <h1>#{{ p.pk }} {{ p.symbol }} {{ p.direction }}</h1>
+  <p>Mode <strong>{{ p.mode }}</strong> - marge ISOLATED - score technique {{ p.score_technical }}/40 (analyse technique seule)</p>
+  <p>Statut : {{ p.status }} - execution : {{ p.exec_status }} - expire a {{ p.expires_at|date:"H:i" }} UTC</p>
+  <form method="post">{% csrf_token %}
+    <label>Prix d'entree <input name="entry" value="{{ p.entry }}" {% if not editable %}readonly{% endif %}></label>
+    <label>Stop Loss <input name="stop_loss" value="{{ p.stop_loss }}" {% if not editable %}readonly{% endif %}></label>
+    <label>Take Profit <input name="take_profit" value="{{ p.take_profit }}" {% if not editable %}readonly{% endif %}></label>
+    <label>Capital (USDT) <input name="capital_usdt" value="{{ p.capital_usdt }}" {% if not editable %}readonly{% endif %}></label>
+    <label>Levier <input name="leverage" value="{{ p.leverage }}" {% if not editable %}readonly{% endif %}></label>
+    <p>Gain potentiel : <strong>{{ gain|floatformat:2 }}%</strong> (~{{ gain_usdt|floatformat:2 }} USDT)<br>
+       Perte potentielle : <strong>{{ loss|floatformat:2 }}%</strong> (~{{ loss_usdt|floatformat:2 }} USDT)<br>
+       <small>Frais et funding non inclus. Aucune probabilite de reussite fiable sans backtest.</small></p>
+    {% if violations %}<p><strong>Bloque par la gestion du risque :</strong></p><ul>{% for v in violations %}<li>{{ v }}</li>{% endfor %}</ul>{% endif %}
+    {% if editable %}
+      <button name="action" value="save">Enregistrer les modifications</button>
+      <hr>
+      <label><input type="checkbox" name="confirm" style="width:auto"> Je confirme ces parametres</label>
+      {% if real %}<label>ARGENT REEL : tape REAL <input name="real_confirm"></label>{% endif %}
+      <button name="action" value="execute" style="background:#16a34a">EXECUTE TRADE</button>
+    {% endif %}
+  </form>
+</section>
+{% if payload.reasons %}<section class="card"><h2>Raisons</h2><ul>{% for r in payload.reasons %}<li>{{ r }}</li>{% endfor %}</ul>
+  <p>Outils : {{ payload.tools|join:", " }}</p>
+  <h2>Risques</h2><ul>{% for r in payload.risks %}<li>{{ r }}</li>{% endfor %}</ul></section>{% endif %}
+{% if p.exec_log %}<section class="card"><h2>Journal d'execution</h2><ul>{% for l in p.exec_log %}<li>{{ l }}</li>{% endfor %}</ul></section>{% endif %}
+{% endblock %}

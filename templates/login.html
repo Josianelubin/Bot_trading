@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Connexion - KPS{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Connexion</h1>
+  <form method="post">{% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">Se connecter</button>
+  </form>
+</section>
+{% endblock %}
