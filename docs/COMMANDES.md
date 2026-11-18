@@ -1,31 +1,34 @@
 # KPS - commandes
 
 ## Installation (Termux)
-pkg install python unzip
-unzip kps-projet.zip && cd kps
+cp -r /storage/emulated/0/Download/kps ~/kps && cd ~/kps
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env && nano .env
 
-## Base de donnees + compte
+## Preparation (une fois)
 python manage.py migrate
-export $(grep -v '^#' .env | xargs)
 python manage.py create_owner
-
-## Verifier
 python manage.py check
 python manage.py test tests
 python manage.py send_test
 
-## Lancer
-python manage.py run_bot --once --dry-run    # test sans Telegram ni base
-python manage.py run_bot --once              # 1 cycle reel (propositions sur Telegram)
-python manage.py run_bot                     # boucle continue
-python manage.py runserver                   # dashboard (autre session Termux)
+## Lancer (2 sessions Termux, venv active)
+python manage.py runserver        # le site : http://127.0.0.1:8000
+termux-wake-lock && python manage.py run_bot   # analyses -> site + Telegram (envoi seul)
 
-## Execution des trades (Phase 10-11)
-1. Variables DEMO : GATEIO_TESTNET_API_KEY / GATEIO_TESTNET_API_SECRET / GATEIO_TESTNET_BASE_URL (a verifier dans la doc Gate)
-2. python manage.py migrate        # applique 0002_execution
-3. python manage.py runserver  +  python manage.py run_bot
-4. Telegram : ACCEPTER -> ouvrir le lien -> definir entree / SL / TP -> EXECUTE TRADE
-5. Dashboard /trades/positions/ : positions, gagnant/perdant, PNL (bouton Synchroniser)
+## Test sans rien envoyer
+python manage.py run_bot --once --dry-run
+python manage.py run_bot --once --symbols BTC_USDT,XAUT_USDT
+
+## Prendre un trade : UNIQUEMENT sur le site
+Analyses -> (symbole) -> Preparer un trade, ou Propositions -> trade
+-> definir entree / SL / TP -> case de confirmation -> EXECUTE TRADE
+Positions : /trades/positions/
+
+## Page Live (graphique en direct, bouton SCANNER)
+http://127.0.0.1:8000/live/   (apres connexion, la page d'accueil y redirige)
+- Timeframes : 1m 5m 15m 30m 1h 4h 8h 1D 1W
+- SCANNER : analyse les bougies CLOTUREES du graphique -> entree / SL / TP1-3 ou ATTENTE
+- Direct : WebSocket Gate Futures USDT (repli : actualisation toutes les 10 s)
+- ARRET D'URGENCE : bloque toute NOUVELLE position

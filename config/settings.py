@@ -177,3 +177,12 @@ GATEIO_TESTNET_API_SECRET = os.environ.get("GATEIO_TESTNET_API_SECRET", "")
 GATEIO_TESTNET_BASE_URL = os.environ.get("GATEIO_TESTNET_BASE_URL", "https://fx-api-testnet.gateio.ws/api/v4")
 KPS_MAX_SLIPPAGE_PCT = _num("KPS_MAX_SLIPPAGE_PCT", 0.5)
 KPS_PUBLIC_URL = os.environ.get("KPS_PUBLIC_URL", "").rstrip("/")
+
+# --- Actualites, or, rapports ---
+KPS_EXTRA_SYMBOLS = [x.strip() for x in os.environ.get("KPS_EXTRA_SYMBOLS", "XAUT_USDT").split(",") if x.strip()]
+KPS_REQUIRE_NEWS = env_bool("KPS_REQUIRE_NEWS", True)
+KPS_NEWS_MAX_AGE_HOURS = _num("KPS_NEWS_MAX_AGE_HOURS", 48, int)
+KPS_NEWS_PER_CYCLE = _num("KPS_NEWS_PER_CYCLE", 10, int)
+KPS_REPORT_ALL_CHARTS = env_bool("KPS_REPORT_ALL_CHARTS", False)
+CRYPTOPANIC_API_KEY = os.environ.get("CRYPTOPANIC_API_KEY", "")
+CRYPTOPANIC_PLAN = os.environ.get("CRYPTOPANIC_PLAN", "developer")

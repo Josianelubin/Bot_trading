@@ -12,5 +12,7 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("accounts/", include("apps.accounts.urls")),
     path("trades/", include("apps.trade_approval.urls")),
+    path("analysis/", include("apps.market_scanner.urls")),
+    path("live/", include("apps.market_scanner.live_urls")),
     path("", include("apps.dashboard.urls")),
 ]

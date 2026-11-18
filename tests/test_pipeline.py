@@ -3,7 +3,6 @@ import zlib
 from unittest import TestCase
 
 from apps.technical_analysis import divergence, wyckoff
-from apps.trade_approval.decisions import decide, parse_callback
 from apps.trade_history.chart import render_png
 from apps.trading.pipeline import build_proposal
 from tests.test_strategies import candle, flat
@@ -57,7 +56,7 @@ class ChartTests(TestCase):
 
 class PipelineTests(TestCase):
     def test_proposal_built_from_real_shape_data(self):
-        r = build_proposal("BTC_USDT", breakout(), breakout(), breakout(), {"min_score": 1})
+        r = build_proposal("BTC_USDT", breakout(), breakout(), breakout(), {"min_score": 1, "require_news": False})
         self.assertEqual(r["status"], "proposal")
         p = r["proposal"]
         self.assertEqual(p["direction"], "LONG")
@@ -71,29 +70,10 @@ class PipelineTests(TestCase):
 
     def test_blocked_by_discipline(self):
         r = build_proposal("BTC_USDT", breakout(), breakout(), breakout(),
-                           {"min_score": 1, "capital_usdt": 100000, "limits": {"max_risk_pct": 0.01}})
+                           {"min_score": 1, "require_news": False, "capital_usdt": 100000, "limits": {"max_risk_pct": 0.01}})
         self.assertEqual(r["status"], "blocked")
         self.assertTrue(r["violations"])
 
     def test_last_candle_ignored(self):
         c = breakout()
-        self.assertEqual(build_proposal("X", c, c, c, {"min_score": 1})["proposal"]["entry"], c[-2]["c"])
-
-
-class DecisionTests(TestCase):
-    def test_parse(self):
-        self.assertEqual(parse_callback("accept:7"), ("accept", 7))
-        self.assertEqual(parse_callback("hack:7"), (None, None))
-        self.assertEqual(parse_callback("accept:x"), (None, None))
-
-    def test_never_twice(self):
-        self.assertIsNone(decide("accepted", False, "accept")[0])
-
-    def test_expired(self):
-        self.assertEqual(decide("pending", True, "accept")[0], "expired")
-
-    def test_accept_reject_edit(self):
-        self.assertEqual(decide("pending", False, "accept")[0], "accepted")
-        self.assertIn("AUCUN ordre", decide("pending", False, "accept")[1])
-        self.assertEqual(decide("pending", False, "reject")[0], "rejected")
-        self.assertIsNone(decide("pending", False, "edit")[0])
+        self.assertEqual(build_proposal("X", c, c, c, {"min_score": 1, "require_news": False})["proposal"]["entry"], c[-2]["c"])

@@ -6,7 +6,10 @@ def normalize_candles(raw):
     """Convertit les bougies Gate.io (valeurs en texte) en floats. Leve ValueError si invalide."""
     out = []
     for r in raw:
-        out.append({k: float(r[k]) for k in ("o", "h", "l", "c", "v")})
+        x = {k: float(r[k]) for k in ("o", "h", "l", "c", "v")}
+        if "t" in r:
+            x["t"] = int(float(r["t"]))
+        out.append(x)
     return out
 
 
@@ -93,3 +96,63 @@ def adx(c, period=14):
     for i in range(start + 1, n):
         res["adx"][i] = (res["adx"][i - 1] * (period - 1) + dx[i]) / period
     return res
+
+
+def macd(closes, fast=12, slow=26, signal=9):
+    """MACD (12, 26, 9) : listes alignees sur closes (None tant que non calculable)."""
+    n = len(closes)
+    ef, es = ema(closes, fast), ema(closes, slow)
+    line = [None if a is None or b is None else a - b for a, b in zip(ef, es)]
+    vals = [x for x in line if x is not None]
+    sig_vals = ema(vals, signal)
+    off = n - len(vals)
+    sig = [None] * off + sig_vals
+    hist = [None if m is None or s_ is None else m - s_ for m, s_ in zip(line, sig)]
+    return {"macd": line, "signal": sig, "hist": hist}
+
+
+def vwap(c):
+    """VWAP recalcule chaque jour UTC (si les bougies ont un temps 't'), sinon cumule depuis le debut."""
+    out, day, pv, vv = [], None, 0.0, 0.0
+    for x in c:
+        d = x["t"] // 86400 if "t" in x else None
+        if d != day:
+            day, pv, vv = d, 0.0, 0.0
+        typical = (x["h"] + x["l"] + x["c"]) / 3
+        pv, vv = pv + typical * x["v"], vv + x["v"]
+        out.append(pv / vv if vv else typical)
+    return out
+
+
+def fib_levels(c, lookback=100):
+    """Retracements de Fibonacci du dernier mouvement (plus bas -> plus haut ou inverse)."""
+    w = c[-lookback:]
+    hi_i = max(range(len(w)), key=lambda i: w[i]["h"])
+    lo_i = min(range(len(w)), key=lambda i: w[i]["l"])
+    hi, lo = w[hi_i]["h"], w[lo_i]["l"]
+    up = hi_i > lo_i
+    ratios = (0.236, 0.382, 0.5, 0.618, 0.786)
+    levels = {r: (hi - r * (hi - lo) if up else lo + r * (hi - lo)) for r in ratios}
+    return {"high": hi, "low": lo, "trend": "up" if up else "down", "levels": levels}
+
+
+def _sma_opt(values, period):
+    out = [None] * len(values)
+    for i in range(period - 1, len(values)):
+        w = values[i + 1 - period:i + 1]
+        if all(x is not None for x in w):
+            out[i] = sum(w) / period
+    return out
+
+
+def stoch_rsi(closes, rsi_p=14, stoch_p=14, k=3, d=3):
+    """Stoch RSI (14, 14, 3, 3) : retourne {k, d} alignes sur closes, valeurs 0..100."""
+    r = rsi(closes, rsi_p)
+    raw = [None] * len(closes)
+    for i in range(len(closes)):
+        w = r[max(0, i - stoch_p + 1):i + 1]
+        if len(w) == stoch_p and all(x is not None for x in w):
+            hi, lo = max(w), min(w)
+            raw[i] = (r[i] - lo) / (hi - lo) * 100 if hi != lo else 50.0
+    kl = _sma_opt(raw, k)
+    return {"k": kl, "d": _sma_opt(kl, d)}

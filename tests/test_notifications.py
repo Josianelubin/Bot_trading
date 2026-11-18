@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 from django.test import SimpleTestCase, override_settings
 
 from apps.notifications import messages as m
-from apps.notifications.telegram import approval_keyboard, send_photo
+from apps.notifications.telegram import send_photo
 
 P = {"id": 7, "symbol": "BTC_USDT", "direction": "LONG", "mode": "DEMO", "leverage": 10,
      "entry": 100.0, "stop_loss": 98.0, "take_profit": 105.0, "capital_usdt": 50,
@@ -35,9 +35,6 @@ class MessageTests(TestCase):
 
 
 class TelegramExtraTests(SimpleTestCase):
-    def test_keyboard(self):
-        self.assertIn("accept:7", approval_keyboard(7))
-
     @override_settings(TELEGRAM_BOT_TOKEN="t", TELEGRAM_CHAT_ID="1")
     def test_photo(self):
         s = MagicMock()

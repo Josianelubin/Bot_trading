@@ -38,6 +38,9 @@ def format_proposal(p):
         lines += [f"Gain potentiel : {gain:+.2f}% de la marge",
                   f"Perte potentielle : {loss:+.2f}% de la marge"]
     lines += ["(frais et funding non inclus)", ""]
+    if p.get("score_fundamental") is not None:
+        lines.append(f"Score partiel technique + fondamental : {p['score_technical'] + p['score_fundamental']}/75 "
+                     "(sentiment pas encore actif)")
     prob = p.get("win_probability_pct")
     n = p.get("backtest_trades")
     if prob is None or not n:
@@ -80,3 +83,38 @@ def format_news(n):
         f"Resume : {_v(n, 'summary')}",
         n["url"],
     ])
+
+
+def format_market_summary(rows, mode):
+    """rows : {symbol, price, change_pct, direction, score}. Message de prix et signaux par monnaie."""
+    lines = [f"MARCHE ({mode}) - prix et signaux", ""]
+    for r in rows:
+        price = "indisponible" if r.get("price") is None else f"{r['price']:g}"
+        chg = "" if r.get("change_pct") is None else f" ({r['change_pct']:+.2f}%)"
+        sig = r["direction"] if r["direction"] != "NEUTRE" else "neutre"
+        lines.append(f"{r['symbol']:<12} {price}{chg} - {sig} {r['score']}/40")
+    return "\n".join(lines)
+
+
+def format_analysis(symbol, a, f):
+    """Outils utilises, direction, score et explication de chacun, puis fondamental."""
+    lines = [f"ANALYSE {symbol} - {a['direction']} - technique {a['score']}/40", ""]
+    for s in a["strategies"]:
+        lines.append(f"* {s['name']} : {s['direction']} {s['score']}/{s['max']}")
+        lines += [f"    - {x}" for x in s["reasons"][:3]]
+    if a.get("mtf"):
+        m = a["mtf"]
+        lines += ["", f"Multi-timeframe : 4H {m['4h']} | 1H {m['1h']} | 15M {m['15m']}"]
+    lines += ["", "Fondamental : " + ("; ".join(f["reasons"]) if f else "indisponible")]
+    for i in (f["items"][:3] if f else []):
+        lines.append(f"  [{i['sentiment']}] {i['title'][:100]} ({i['source']})")
+    return "\n".join(lines)
+
+
+def format_news_digest(items):
+    """items : actualites NOUVELLES (symbol, title, source, url, sentiment, importance, reliability)."""
+    lines = ["NOUVELLES ACTUALITES", ""]
+    for i in items:
+        lines += [f"[{i['symbol']}] {i['sentiment'].upper()} - importance {i['importance']} - source {i['source']} ({i['reliability']})",
+                  i["title"], i["url"], ""]
+    return "\n".join(lines)

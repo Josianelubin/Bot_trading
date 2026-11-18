@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}{{ a.symbol }} - KPS{% endblock %}
+{% block content %}
+{% for m in messages %}<p class="card"><strong>{{ m }}</strong></p>{% endfor %}
+<section class="card">
+  <h1>{{ a.symbol }} - {{ a.direction }} {{ a.score }}/40</h1>
+  <p>Prix {{ a.price|default_if_none:"-" }} - mise a jour {{ a.updated_at|date:"d/m H:i" }} UTC - analyse technique + actualites (sentiment pas encore actif)</p>
+  {% if a.chart_png %}<img src="{% url 'market_scanner:chart' a.symbol %}" style="width:100%" alt="graphique">
+  <p><small>Jaune = entree, rouge = Stop Loss, vert = Take Profit, bleu = Bollinger, zones = Order Blocks / FVG valides.</small></p>{% endif %}
+  {% if p.mtf %}<p>Multi-timeframe : 4H {{ p.mtf.h4 }} | 1H {{ p.mtf.h1 }} | 15M {{ p.mtf.m15 }}</p>{% endif %}
+</section>
+<section class="card"><h2>Outils utilises et explications</h2>
+  {% for s in p.strategies %}<p><strong>{{ s.name }}</strong> : {{ s.direction }} {{ s.score }}/{{ s.max }}</p>
+  <ul>{% for r in s.reasons %}<li>{{ r }}</li>{% endfor %}</ul>{% endfor %}
+</section>
+<section class="card"><h2>Analyse fondamentale et actualites</h2>
+  <ul>{% for r in f.reasons %}<li>{{ r }}</li>{% endfor %}</ul>
+  {% if f.block %}<p><strong>Blocage : {{ f.block }}</strong></p>{% endif %}
+  {% for i in f.items %}<p>[{{ i.sentiment }} - importance {{ i.importance }} - source {{ i.source }} ({{ i.reliability }})]<br>
+    <a href="{{ i.url }}" target="_blank" rel="noopener">{{ i.title }}</a></p>{% endfor %}
+</section>
+<section class="card"><h2>Preparer un trade (mode {{ mode }})</h2>
+  <form method="post" action="{% url 'market_scanner:create_trade' a.symbol %}">{% csrf_token %}
+    <label>Direction <select name="direction"><option>LONG</option><option>SHORT</option></select></label>
+    <label>Prix d'entree <input name="entry" value="{{ a.price|default_if_none:'' }}"></label>
+    <label>Stop Loss <input name="stop_loss"></label>
+    <label>Take Profit <input name="take_profit"></label>
+    <label>Capital (USDT) <input name="capital_usdt" value="20"></label>
+    <label>Levier <input name="leverage" value="5"></label>
+    <button>Preparer (aucun ordre envoye)</button>
+  </form>
+</section>
+{% endblock %}

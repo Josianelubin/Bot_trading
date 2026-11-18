@@ -1,0 +1,127 @@
+{% load static %}<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KPS Trading Bot - Live</title>
+  <link rel="stylesheet" href="{% static 'css/live.css' %}">
+  <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+{% csrf_token %}
+<div id="cfg" data-symbol="{{ symbol }}" data-ws="{{ ws_url }}" data-mode="{{ mode }}" data-emergency="{{ emergency|yesno:'1,0' }}"
+     data-close="{% url 'live:close' 0 %}"
+     data-urls='{"candles":"{% url 'live:candles' %}","scan":"{% url 'live:scan' %}","prices":"{% url 'live:prices' %}","account":"{% url 'live:account' %}","emergency":"{% url 'live:emergency' %}","performance":"{% url 'live:performance' %}"}'></div>
+
+<header class="top">
+  <div class="logo"><span class="logomark">📈</span><div><div class="brand">KPS</div><div class="sub2">TRADING BOT</div></div></div>
+  <em class="tagline">Tradez Intelligemment, Gagnez Plus...</em>
+  <div class="box"><span class="ico">💼</span><div><small>Solde Total</small><strong id="acc-balance">—</strong><i id="acc-balance-sub"></i></div></div>
+  <div class="box"><span class="ico">📈</span><div><small>Profit/Perte (24h)</small><strong id="acc-pnl">—</strong><i id="acc-pnl-sub"></i></div></div>
+  <div class="box"><span class="ico">🗂️</span><div><small>Positions Ouvertes</small><strong id="acc-open">—</strong><i>(en cours)</i></div></div>
+  <span class="badge {% if mode == 'DEMO' %}demo{% else %}real{% endif %}">{{ mode }}</span>
+  <div class="profile">
+    <details><summary><span class="avatar">{{ request.user.get_username|slice:":1"|upper }}</span>
+      <span><b>{{ request.user.get_username }}</b><br><small><span class="dot"></span>En ligne</small></span> ▾</summary>
+      <div class="menu">
+        <a href="{% url 'market_scanner:list' %}">Analyses</a>
+        <a href="{% url 'trade_approval:proposals' %}">Propositions</a>
+        <a href="{% url 'trade_approval:positions' %}">Positions</a>
+        <button id="btn-emergency" class="danger">ARRET D'URGENCE</button>
+        <form method="post" action="{% url 'accounts:logout' %}">{% csrf_token %}<button>Deconnexion</button></form>
+      </div>
+    </details>
+  </div>
+</header>
+
+<div class="grid">
+  <aside class="pairs card">
+    <div class="tabs"><button class="tab on" data-tab="crypto">Crypto</button><button class="tab" data-tab="gold">Or</button><button class="tab" data-tab="fav">Favoris ★</button></div>
+    <input id="search" placeholder="Rechercher une paire...">
+    <div id="pairlist">
+      {% for s in crypto %}<div class="pair" data-sym="{{ s }}" data-group="crypto"><i class="coin">{{ s|slice:":1" }}</i><span>{{ s|cut:"_USDT" }}/USDT</span><b class="px">—</b><em class="chg">—</em><u class="star">☆</u></div>{% endfor %}
+      {% for s in gold %}<div class="pair" data-sym="{{ s }}" data-group="gold"><i class="coin gold">Au</i><span>{{ s|cut:"_USDT" }}/USDT</span><b class="px">—</b><em class="chg">—</em><u class="star">☆</u></div>{% endfor %}
+    </div>
+  </aside>
+
+  <section class="chartbox card">
+    <div class="toolbar">
+      <div id="tfs">
+        <button data-tf="1m">1m</button><button data-tf="5m">5m</button><button data-tf="15m">15m</button><button data-tf="30m">30m</button><button data-tf="1h" class="on">1h</button><button data-tf="4h">4h</button><button data-tf="8h">8h</button><button data-tf="1d">1D</button><button data-tf="1w">1W</button>
+      </div>
+      <button id="tool-trend" title="Ligne de tendance (2 clics)">╱</button>
+      <button id="tool-h" title="Ligne horizontale (1 clic)">☰</button>
+      <details class="ind"><summary>Indicateurs</summary>
+        <div class="indmenu">
+          <label><input type="checkbox" data-ind="ema" checked> EMA 9/21/50/200</label>
+          <label><input type="checkbox" data-ind="bb" checked> Bollinger</label>
+          <label><input type="checkbox" data-ind="vwap"> VWAP</label>
+          <label><input type="checkbox" data-ind="fib" checked> Fibonacci</label>
+          <label><input type="checkbox" data-ind="vol" checked> Volume</label>
+          <label><input type="checkbox" data-ind="rsi" checked> RSI (14)</label>
+          <label><input type="checkbox" data-ind="macd" checked> MACD (12,26,9)</label>
+          <label><input type="checkbox" data-ind="stoch" checked> Stoch RSI (14,14,3,3)</label>
+        </div>
+      </details>
+      <button id="btn-zout" title="Dezoomer">－</button><button id="btn-zin" title="Zoomer">＋</button>
+      <button id="btn-fit" title="Voir tout l'historique">⤢</button><button id="btn-live" title="Revenir au direct">⏭</button>
+      <button id="btn-undo" title="Annuler">↶</button><button id="btn-redo" title="Retablir">↷</button>
+      <button id="btn-shot" title="Capture d'image">📷</button><button id="btn-full" title="Agrandir le graphique">⛶</button>
+    </div>
+    <div class="head"><i class="coin" id="head-coin">B</i><b id="title">{{ symbol }}</b> <span id="last">—</span> <span id="head-chg"></span> <small id="livestate">connexion...</small></div>
+    <div id="msg" class="msg"></div>
+    <div class="chartwrap">
+      <div id="legend" class="legend"></div>
+      <div id="chart"></div>
+    </div>
+    <div class="sublabel" id="lbl-rsi"></div><div id="rsi" class="sub"></div>
+    <div class="sublabel" id="lbl-macd"></div><div id="macd" class="sub"></div>
+    <div class="sublabel" id="lbl-stoch"></div><div id="stoch" class="sub"></div>
+    <small>Zoom : pince avec 2 doigts, ou boutons ＋ －. Glisse horizontalement pour deplacer. Marche : Gate Futures USDT.</small>
+  </section>
+
+  <aside class="scan card" id="scanpanel">
+    <div class="scanhead"><b>⚡ Scanner d'Analyse</b><button id="btn-refresh" class="primary small">Actualiser</button></div>
+    <div id="signal" class="signal wait"><b>—</b><small>Clique sur Scanner</small></div>
+    <div id="trend" class="trend"></div>
+    <div id="levels"></div>
+    <div class="ach">Analyse Technique</div>
+    <div id="confirms"></div>
+    <label class="auto"><input type="checkbox" id="auto"> Scan automatique (60 s)</label>
+    <button id="btn-scan" class="primary">🔍 Scanner</button>
+    <small id="scan-time"></small>
+    <small>Le score mesure la conformite aux regles, pas une probabilite de gain. Les performances passees ne garantissent pas les performances futures.</small>
+  </aside>
+</div>
+
+<div class="bottom">
+  <section class="card"><h3>Positions Ouvertes <span class="count">{{ open_positions|length }}</span></h3>
+    <div class="tablewrap"><table id="openpos"><tr><th>Paire</th><th>Type</th><th>Levier</th><th>Entree</th><th>Prix Actuel</th><th>P&amp;L (%)</th><th>Actions</th></tr>
+      {% for t in open_positions %}<tr data-sym="{{ t.symbol }}" data-dir="{{ t.direction }}" data-entry="{{ t.fill_price|default_if_none:t.entry }}" data-lev="{{ t.leverage }}">
+        <td><a href="{% url 'trade_approval:detail' t.pk %}">{{ t.symbol|cut:"_USDT" }}/USDT</a></td>
+        <td><span class="tag {{ t.direction|lower }}">{{ t.direction }}</span></td><td>{{ t.leverage }}x</td><td>{{ t.fill_price|default_if_none:t.entry }}</td>
+        <td class="cur">—</td><td class="pl">—</td><td><button class="danger btn-close" data-id="{{ t.pk }}">Fermer</button></td></tr>
+      {% empty %}<tr><td colspan="7">Aucune position ouverte.</td></tr>{% endfor %}
+    </table></div></section>
+  <section class="card"><div class="rowhead"><h3>Historique des Trades</h3><a href="{% url 'trade_approval:positions' %}">Voir tout →</a></div>
+    <div class="tablewrap"><table><tr><th>Paire</th><th>Type</th><th>Prix</th><th>P&amp;L</th><th>Date</th></tr>
+      {% for t in recent_closed %}<tr><td>{{ t.symbol|cut:"_USDT" }}/USDT</td><td><span class="tag {{ t.direction|lower }}">{{ t.direction }}</span></td><td>{{ t.fill_price|default_if_none:"-" }}</td>
+        <td class="{% if t.net_pnl > 0 %}up{% else %}down{% endif %}">{{ t.net_pnl|floatformat:2 }} USDT</td><td>{{ t.closed_at|date:"d/m H:i" }}</td></tr>
+      {% empty %}<tr><td colspan="5">Aucun trade cloture.</td></tr>{% endfor %}
+    </table></div></section>
+  <section class="card"><div class="rowhead"><h3>📊 Performance Globale</h3>
+      <select id="perf-days"><option value="7">7j</option><option value="30" selected>30j</option><option value="90">90j</option></select></div>
+    <div class="perf"><div><div id="perf-pnl" class="big">—</div><small>Gains totaux (trades clotures)</small></div>
+      <div id="perfchart"></div></div>
+    <p><b>Win Rate</b> <span id="perf-rate">—</span> &nbsp; <b>Trades gagnants</b> <span id="perf-wins">—</span></p></section>
+</div>
+
+<footer class="foot">
+  <span class="shield">🛡️</span><b>KPS TRADING BOT</b> — Votre partenaire de trading intelligent avec analyse en temps reel et signaux fiables.
+  <span class="sep">|</span> Risque maitrise <span class="sep">|</span> Strategie avancee <span class="sep">|</span> Performance optimisee
+  <span class="market"><span class="dot" id="foot-dot"></span> Marches : <b id="foot-state">connexion...</b></span>
+</footer>
+<button id="fab-scan" class="fab" type="button">🔍 Scanner</button>
+<script src="{% static 'js/live.js' %}"></script>
+</body>
+</html>

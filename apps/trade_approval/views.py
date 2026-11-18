@@ -14,6 +14,8 @@ from apps.trading.factory import trader_from_settings
 from apps.trading.gate_private import GateTradeError
 from apps.trading.sync import sync_open_trades
 
+from apps.audit.models import emergency_active
+
 from .models import TradeProposal
 
 
@@ -52,6 +54,11 @@ def detail(request, pk):
         if not editable:
             flash.error(request, "Cette proposition n'est plus modifiable ni executable (expiree, rejetee ou deja traitee).")
             return redirect("trade_approval:detail", pk=pk)
+        if request.POST.get("action") == "reject":
+            obj.status, obj.decided_at = "rejected", now
+            obj.save(update_fields=["status", "decided_at"])
+            flash.success(request, "Proposition rejetee. Aucun ordre envoye.")
+            return redirect("trade_approval:detail", pk=pk)
         try:
             vals = {"entry": float(request.POST["entry"]), "stop_loss": float(request.POST["stop_loss"]),
                     "take_profit": float(request.POST["take_profit"]),
@@ -69,6 +76,9 @@ def detail(request, pk):
             flash.success(request, "Parametres enregistres. Aucun ordre envoye.")
             return redirect("trade_approval:detail", pk=pk)
         if action == "execute":
+            if emergency_active():
+                flash.error(request, "ARRET D'URGENCE actif : aucune nouvelle position n'est autorisee.")
+                return redirect("trade_approval:detail", pk=pk)
             if request.POST.get("confirm") != "on":
                 flash.error(request, "Coche la case de confirmation pour executer.")
                 return redirect("trade_approval:detail", pk=pk)

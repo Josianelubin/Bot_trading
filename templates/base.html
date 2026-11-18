@@ -12,7 +12,7 @@
     <span class="badge {% if KPS_MODE == 'DEMO' %}demo{% else %}real{% endif %}">{{ KPS_MODE }}</span>
     <span class="badge">Marge {{ KPS_MARGIN }}</span>
     {% if user.is_authenticated %}
-    <a href="{% url 'dashboard:home' %}">Dashboard</a> <a href="{% url 'trade_approval:proposals' %}">Propositions</a> <a href="{% url 'trade_approval:positions' %}">Positions</a>
+    <a href="{% url 'dashboard:home' %}">Dashboard</a> <a href="{% url 'live:page' %}">Live</a> <a href="{% url 'market_scanner:list' %}">Analyses</a> <a href="{% url 'trade_approval:proposals' %}">Propositions</a> <a href="{% url 'trade_approval:positions' %}">Positions</a>
     <form method="post" action="{% url 'accounts:logout' %}" class="logout">{% csrf_token %}<button>Deconnexion</button></form>
     {% endif %}
   </header>

@@ -18,6 +18,7 @@
     {% if violations %}<p><strong>Bloque par la gestion du risque :</strong></p><ul>{% for v in violations %}<li>{{ v }}</li>{% endfor %}</ul>{% endif %}
     {% if editable %}
       <button name="action" value="save">Enregistrer les modifications</button>
+      <button name="action" value="reject" style="background:#991b1b">Rejeter</button>
       <hr>
       <label><input type="checkbox" name="confirm" style="width:auto"> Je confirme ces parametres</label>
       {% if real %}<label>ARGENT REEL : tape REAL <input name="real_confirm"></label>{% endif %}
