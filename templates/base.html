@@ -4,11 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}KPS{% endblock %}</title>
-  <link rel="stylesheet" href="{% static 'css/kps.css' %}">
+  <link rel="icon" type="image/png" href="{% static 'images/nono-64.png' %}">
+  <link rel="apple-touch-icon" href="{% static 'images/nono-192.png' %}">
+  <link rel="manifest" href="{% static 'manifest.webmanifest' %}">
+  <meta name="theme-color" content="#0b1a3d">
+  <link rel="stylesheet" href="{% static 'css/kps.css' %}?v=3">
 </head>
 <body>
   <header class="top">
-    <strong>KPS</strong>
+    <img src="{% static 'images/nono-64.png' %}" alt="KPS" class="navlogo" width="28" height="28" style="width:28px;height:28px"><strong>KPS</strong>
     <span class="badge {% if KPS_MODE == 'DEMO' %}demo{% else %}real{% endif %}">{{ KPS_MODE }}</span>
     <span class="badge">Marge {{ KPS_MARGIN }}</span>
     {% if user.is_authenticated %}

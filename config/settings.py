@@ -25,6 +25,8 @@ ALLOWED_HOSTS = [h.strip() for h in os.environ.get("KPS_ALLOWED_HOSTS", "localho
 _render_host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
 if _render_host:
     ALLOWED_HOSTS.append(_render_host)
+CSRF_TRUSTED_ORIGINS = [f"https://{_render_host}"] if _render_host else []
+CSRF_TRUSTED_ORIGINS += [o.strip() for o in os.environ.get("KPS_CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -84,9 +86,13 @@ TEMPLATES = [
 WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
 
+# Base de donnees : DATABASE_URL choisit SQLite (local) ou PostgreSQL (Render) :
+#   sqlite:///db.sqlite3
+#   postgres://utilisateur:motdepasse@hote:5432/nombase   (KPS_DB_SSL=true si connexion externe)
 DATABASES = {
     "default": dj_database_url.config(
-        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}", conn_max_age=600
+        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}", conn_max_age=600,
+        ssl_require=env_bool("KPS_DB_SSL", False),
     )
 }
 

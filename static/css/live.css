@@ -103,3 +103,10 @@ body.nomaxscroll{overflow:hidden}
   #chart{height:78vh;min-height:220px}.sub{height:70px}
   .top{padding:.3rem .5rem}.logo{flex:0 0 auto}.box{flex:0 1 150px}
 }
+.logoimg{width:56px;height:56px;border-radius:.9rem;box-shadow:0 0 12px #2563eb88}
+.lucide{width:1.15em;height:1.15em;vertical-align:-.2em;stroke-width:2}
+.box .ico .lucide{width:1.7rem;height:1.7rem;color:#60a5fa}
+.toolbar .lucide{width:1.1rem;height:1.1rem}.shield .lucide{width:1.5rem;height:1.5rem;color:#22c55e}
+.lv .lucide{color:#93c5fd}.cd{display:inline-flex;gap:.25rem;align-items:center;background:#0b1a3d;border:1px solid #1d4ed8;border-radius:.4rem;padding:.05rem .5rem;font-size:.9rem}
+.cd b{font-variant-numeric:tabular-nums}
+@media(max-width:1000px){.logo{flex:1 1 100%}.logoimg{width:44px;height:44px}}

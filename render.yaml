@@ -1,14 +1,10 @@
 services:
   - type: web
     name: kps-web
-    runtime: python
+    runtime: docker
     plan: free
-    buildCommand: "./build.sh"
-    startCommand: "gunicorn config.wsgi:application"
     healthCheckPath: /health/
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.12.3
       - key: KPS_DEBUG
         value: "False"
       - key: KPS_SECRET_KEY
@@ -33,13 +29,11 @@ services:
   # Verifie sur render.com si ce type de service est payant pour ton compte.
   - type: worker
     name: kps-bot
-    runtime: python
+    runtime: docker
     plan: starter
-    buildCommand: "pip install -r requirements-prod.txt"
-    startCommand: "python manage.py run_bot"
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.12.3
+      - key: KPS_ROLE
+        value: bot
       - key: KPS_DEBUG
         value: "False"
       - key: KPS_SECRET_KEY

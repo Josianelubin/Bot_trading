@@ -3,12 +3,15 @@
   var cfg = document.getElementById("cfg");
   var URLS = JSON.parse(cfg.dataset.urls), WS_URL = cfg.dataset.ws, MODE = cfg.dataset.mode, CLOSE_URL = cfg.dataset.close;
   var TF_WS = { "1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m", "1h": "1h", "4h": "4h", "8h": "8h", "1d": "1d", "1w": "7d" };
+  var TF_SEC = { "1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "4h": 14400, "8h": 28800, "1d": 86400, "1w": 604800 };
   var state = { symbol: cfg.dataset.symbol || "BTC_USDT", tf: "1h", ws: null, wsOk: false, lines: [], fibLines: [], tick: 0 };
   var csrf = document.querySelector("input[name=csrfmiddlewaretoken]").value;
   var $ = function (id) { return document.getElementById(id); };
   var prices = {}, L = {}, fibData = null, fibOn = true;
   var ALL = Array.prototype.map.call(document.querySelectorAll(".pair"), function (e) { return e.dataset.sym; });
 
+  function icons() { try { if (window.lucide && window.lucide.createIcons) window.lucide.createIcons(); } catch (e) {} }
+  function ic(name) { return '<i data-lucide="' + name + '"></i>'; }
   function f(v) {
     if (v === null || v === undefined || isNaN(v)) return "—";
     var a = Math.abs(v), d = a >= 1000 ? 2 : a >= 1 ? 4 : 6;
@@ -119,6 +122,22 @@
   }
   function load() { msg("Chargement..."); headInfo(); clearScan(); clearDrawings(); fetchAndPaint().then(connectLive); }
 
+  // ---- duree restante avant la cloture de la bougie en cours ----
+  var cdRefreshed = 0;
+  function fmtCd(sec) {
+    var d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+    var p = function (n) { return (n < 10 ? "0" : "") + n; };
+    return (d ? d + "j " : "") + (h || d ? p(h) + ":" : "") + p(m) + ":" + p(s);
+  }
+  function tickCountdown() {
+    if (!L.ohlc || !L.ohlc.time) return;
+    var rem = L.ohlc.time + TF_SEC[state.tf] - Math.floor(Date.now() / 1000);
+    var txt = rem > 0 ? fmtCd(rem) : "00:00";
+    $("countdown").textContent = txt; $("scan-cd").textContent = "Bougie " + state.tf.toUpperCase() + " en cours : cloture dans " + txt + " (le scanner analyse les bougies deja cloturees)";
+    if (rem <= 0 && Date.now() - cdRefreshed > 5000) { cdRefreshed = Date.now(); fetchAndPaint(); }
+  }
+  setInterval(tickCountdown, 1000);
+
   // ---- direct : WebSocket Gate (candlesticks + tickers) avec repli ----
   function setLive(ok, text) {
     $("livestate").textContent = text; $("foot-state").textContent = ok ? "En direct" : text;
@@ -163,7 +182,7 @@
   // ---- scanner ----
   function clearScan() { state.lines.forEach(function (l) { candle.removePriceLine(l); }); state.lines = []; candle.setMarkers([]); }
   function addLine(price, color, title) { state.lines.push(candle.createPriceLine({ price: price, color: color, lineWidth: 2, lineStyle: 0, axisLabelVisible: true, title: title })); }
-  function row(ico, l, v, cls) { return '<div class="lv"><span>' + ico + " " + l + '</span><b class="' + (cls || "") + '">' + v + "</b></div>"; }
+  function row(ico, l, v, cls) { return '<div class="lv"><span>' + ic(ico) + " " + l + '</span><b class="' + (cls || "") + '">' + v + "</b></div>"; }
   function scan() {
     $("signal").className = "signal wait"; $("signal").innerHTML = "<b>Analyse...</b>";
     api(URLS.scan + "?symbol=" + state.symbol + "&tf=" + state.tf).then(function (r) {
@@ -171,14 +190,14 @@
       var cls = r.direction === "LONG" ? "long" : r.direction === "SHORT" ? "short" : "wait";
       var sc = r.score !== undefined ? " · Score : " + r.score + "/" + r.max_score + " (" + Math.round(100 * r.score / r.max_score) + " %)" : "";
       $("signal").className = "signal " + cls;
-      $("signal").innerHTML = "<b>" + (r.direction === "ATTENTE" ? "✖ ATTENTE" : "✔ Signal : " + r.direction) + "</b><small>" + (r.message || "") + sc + "</small>";
+      $("signal").innerHTML = "<b>" + (r.direction === "ATTENTE" ? ic("circle-x") + " ATTENTE" : ic("circle-check") + " Signal : " + r.direction) + "</b><small>" + (r.message || "") + sc + "</small>";
       var arrow = r.trend && r.trend.indexOf("Haussi") === 0 ? " ↗" : r.trend && r.trend.indexOf("Baissi") === 0 ? " ↘" : "";
       $("trend").textContent = "Tendance : " + (r.trend || "—") + arrow;
-      var h = row("🪙", "Crypto", r.symbol.replace("_", "/")) + row("⏱", "Timeframe", r.timeframe);
+      var h = row("coins", "Crypto", r.symbol.replace("_", "/")) + row("clock", "Timeframe", r.timeframe);
       if (r.status === "signal") {
-        h += row("🎯", "Point d'Entree", f(r.entry) + " USDT", "up") + row("✔", "Take Profit 1", f(r.take_profits[0]) + " USDT", "up") +
-          row("✔", "Take Profit 2", f(r.take_profits[1]) + " USDT", "up") + row("✔", "Take Profit 3", f(r.take_profits[2]) + " USDT", "up") +
-          row("⛔", "Stop Loss", f(r.stop_loss) + " USDT", "down");
+        h += row("target", "Point d'Entree", f(r.entry) + " USDT", "up") + row("circle-check", "Take Profit 1", f(r.take_profits[0]) + " USDT", "up") +
+          row("circle-check", "Take Profit 2", f(r.take_profits[1]) + " USDT", "up") + row("circle-check", "Take Profit 3", f(r.take_profits[2]) + " USDT", "up") +
+          row("octagon-x", "Stop Loss", f(r.stop_loss) + " USDT", "down");
         addLine(r.entry, "#22c55e", "Entree : " + f(r.entry)); addLine(r.stop_loss, "#ef4444", "SL : " + f(r.stop_loss));
         r.take_profits.forEach(function (p, i) { addLine(p, "#4ade80", "TP" + (i + 1) + " : " + f(p)); });
         api(URLS.candles + "?symbol=" + state.symbol + "&tf=" + state.tf).then(function (d) {
@@ -190,6 +209,7 @@
       $("confirms").innerHTML = (r.confirmations || []).map(function (c) {
         return '<div class="conf"><span>' + c.name + " : " + (c.value === null ? "—" : c.value) + "</span><span>" + c.verdict + "</span></div>";
       }).join("");
+      icons();
       $("scan-time").textContent = "Calcule le " + r.timestamp.replace("T", " ").replace("+00:00", " UTC") + " · bougies cloturees · " + r.market;
     }).catch(function (e) { $("signal").className = "signal wait"; $("signal").innerHTML = "<b>Indisponible</b><small>" + e.message + "</small>"; });
   }
@@ -286,7 +306,7 @@
   $("btn-live").onclick = function () { chart.timeScale().scrollToRealTime(); };
   function maximize(on) {
     document.querySelector(".chartbox").classList.toggle("maxi", on); document.body.classList.toggle("nomaxscroll", on);
-    $("btn-full").textContent = on ? "✕" : "⛶"; setTimeout(resizeAll, 120);
+    $("btn-full").innerHTML = ic(on ? "minimize" : "maximize"); icons(); setTimeout(resizeAll, 120);
   }
   $("btn-full").onclick = function () { maximize(!document.querySelector(".chartbox").classList.contains("maxi")); };
   document.addEventListener("keydown", function (e) { if (e.key === "Escape") maximize(false); });
@@ -337,7 +357,7 @@
   }
   $("perf-days").onchange = loadPerf;
 
-  paintLegend({});
+  icons(); paintLegend({});
   load(); loadPrices(); loadAccount(); loadPerf(); filterPairs(); resizeAll();
   setInterval(loadPrices, 10000); setInterval(loadAccount, 30000); setInterval(loadPerf, 60000);
 })();

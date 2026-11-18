@@ -1,7 +1,9 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}Connexion - KPS{% endblock %}
 {% block content %}
 <section class="card">
+  <img src="{% static 'images/nono-64.png' %}" alt="KPS Trading Bot" class="biglogo" width="56" height="56" style="display:block;margin:0 auto .6rem;width:56px;height:56px;max-width:56px;border-radius:.8rem">
   <h1>Connexion</h1>
   <form method="post">{% csrf_token %}
     {{ form.as_p }}
