@@ -2,16 +2,34 @@
 Resultat horodate ; ATTENTE si aucune configuration assez confirmee. Aucune donnee inventee."""
 from datetime import datetime, timezone
 
+from apps.smart_money import ict
+from apps.smart_money.setup import find_setup
 from apps.technical_analysis import bollinger, engine, indicators as ind
 
-DEFAULT = {"min_score": 24, "r_multiples": (1.0, 2.0, 3.0)}
+DEFAULT = {"min_score": 24, "r_multiples": (1.0, 2.0, 3.0), "leverage": 5, "capital_usdt": 20.0}
 
 
 def _v(label, value, verdict):
     return {"name": label, "value": value, "verdict": verdict}
 
 
-def scan(closed, symbol, timeframe, cfg=None):
+def potential(direction, entry, sl, tps, leverage, capital):
+    """Gain / perte potentiels (hors frais et funding) : en % du prix, en % de la marge (x levier) et en USDT."""
+    sign = 1 if direction == "LONG" else -1
+    risk = abs(entry - sl)
+    rows = []
+    for tp in tps:
+        gp = sign * (tp - entry) / entry * 100
+        rows.append({"price": tp, "gain_price_pct": gp, "gain_margin_pct": gp * leverage,
+                     "gain_usdt": capital * gp * leverage / 100, "reward_risk": abs(tp - entry) / risk if risk else None})
+    lp = sign * (sl - entry) / entry * 100
+    liq = entry * (1 - 1 / leverage) if direction == "LONG" else entry * (1 + 1 / leverage)
+    return {"leverage": leverage, "capital_usdt": capital, "targets": rows, "stop_price": sl,
+            "loss_price_pct": lp, "loss_margin_pct": lp * leverage, "loss_usdt": capital * lp * leverage / 100,
+            "liquidation_approx": liq, "stop_beyond_liquidation": abs(entry - sl) / entry >= 0.8 / leverage}
+
+
+def scan(closed, symbol, timeframe, cfg=None, htf_closed=None):
     cfg = {**DEFAULT, **(cfg or {})}
     stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
     base = {"symbol": symbol, "timeframe": timeframe, "market": "Gate Futures USDT", "timestamp": stamp}
@@ -57,18 +75,37 @@ def scan(closed, symbol, timeframe, cfg=None):
         _v("Volume", f"{vols[-1]:g}", "en hausse" if vol_up else "en baisse"),
         _v("Fibonacci", f"{near[0]} -> {near[1]:g}", f"niveau proche ({fib['trend']})"),
     ]
-    out = {**base, "trend": trend, "score": a["score"], "max_score": 40, "direction_raw": a["direction"],
+    htf_trend = ict.structure(htf_closed)["trend"] if htf_closed and len(htf_closed) >= 30 else None
+    setup = find_setup(closed, htf_trend=htf_trend if htf_trend in ("UP", "DOWN") else None)
+    out = {**base, "trend": trend, "htf_trend": htf_trend, "ict": setup, "score": a["score"], "max_score": 40, "direction_raw": a["direction"],
            "tools": a["tools"], "reasons": a["reasons"], "confirmations": confirmations,
            "indicators": {"rsi": rsi, "macd_hist": m["hist"][-1], "adx": adx, "atr": atr, "vwap": vw},
            "mtf": None}
+    lev, cap = cfg["leverage"], cfg["capital_usdt"]
+    if setup:
+        d = setup["direction"]
+        if a["direction"] not in ("NEUTRE", d):
+            return {**out, "status": "ATTENTE", "direction": "ATTENTE",
+                    "message": f"ATTENTE : setup ICT {d} mais les autres strategies indiquent {a['direction']} (contradiction)"}
+        aligned = sum(1 for r in a["strategies"] if r["direction"] == d)
+        status = "signal" if setup["status"] in ("zone", "profond") else "signal_limite"
+        note = {"zone": "prix dans la zone OTE : entree possible",
+                "profond": "prix sous la zone OTE (retracement profond) : respecter l'invalidation",
+                "attente": "ordre LIMITE : attendre le retracement dans la zone OTE"}[setup["status"]]
+        tps = setup["take_profits"]
+        return {**out, "status": status, "direction": d, "entry": setup["entry"], "stop_loss": setup["stop_loss"],
+                "take_profits": tps, "entry_mode": setup["status"], "aligned_strategies": aligned,
+                "message": f"Setup ICT {d} (grade {setup['grade']}, {setup['score']}/{setup['max']}) sur {timeframe} : {note}",
+                "potential": potential(d, setup["entry"], setup["stop_loss"], tps, lev, cap)}
     if a["direction"] == "NEUTRE" or a["score"] < cfg["min_score"] or not a.get("suggested"):
-        why = ("Strategies contradictoires ou signal isole" if a["direction"] == "NEUTRE"
+        why = ("Strategies contradictoires, signal isole ou aucun setup ICT" if a["direction"] == "NEUTRE"
                else f"Score {a['score']}/40 inferieur au minimum {cfg['min_score']}")
         return {**out, "status": "ATTENTE", "direction": "ATTENTE", "message": "ATTENTE : " + why}
     d, entry, sl = a["direction"], last, a["suggested"]["stop_loss"]
     dist = abs(entry - sl)
     sign = 1 if d == "LONG" else -1
     tps = [entry + sign * r * dist for r in cfg["r_multiples"]]
-    return {**out, "status": "signal", "direction": d, "entry": entry, "stop_loss": sl,
-            "take_profits": tps, "r_multiples": list(cfg["r_multiples"]),
-            "message": f"Signal {d} sur {timeframe} (analyse technique, score {a['score']}/40)"}
+    return {**out, "status": "signal", "direction": d, "entry": entry, "stop_loss": sl, "entry_mode": "marche",
+            "take_profits": tps, "r_multiples": list(cfg["r_multiples"]), "aligned_strategies": sum(1 for r in a["strategies"] if r["direction"] == d),
+            "message": f"Signal {d} sur {timeframe} (strategies multiples, score {a['score']}/40)",
+            "potential": potential(d, entry, sl, tps, lev, cap)}

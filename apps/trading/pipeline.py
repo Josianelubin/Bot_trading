@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 
 from apps.fundamental_analysis import engine as fundamental
 from apps.risk_management.discipline import check_plan
+from apps.smart_money import ict as ict_lib
+from apps.smart_money.setup import find_setup
 from apps.technical_analysis import engine
 
 DEFAULT_CFG = {
@@ -41,6 +43,15 @@ def build_proposal(symbol, c4h, c1h, c15, cfg=None, news=None):
     sl = a["suggested"]["stop_loss"]
     dist = abs(entry - sl)
     tp = entry + cfg["reward_risk"] * dist if d == "LONG" else entry - cfg["reward_risk"] * dist
+    # Setup ICT (OTE / FVG / OB / CHoCH) : s'il confirme la direction ET que le prix est dans la zone,
+    # le stop et l'objectif viennent de la structure (origine de la jambe, liquidite, extension -27 %).
+    htf = ict_lib.structure(c4h[:-1])["trend"] if len(c4h) > 45 else None
+    setup = find_setup(c15[:-1], htf_trend=htf if htf in ("UP", "DOWN") else None)
+    setup_reasons = []
+    if setup and setup["direction"] == d and setup["status"] in ("zone", "profond"):
+        sl, tp = setup["stop_loss"], setup["take_profits"][1]
+        dist = abs(entry - sl)
+        setup_reasons = [f"Setup ICT grade {setup['grade']} ({setup['score']}/{setup['max']}) : " + ", ".join(setup["confluences"])] + setup["reasons"][:4]
     lev = min(int(cfg["leverage"]), int(cfg["max_leverage"]))
     liq = entry * (1 - 1 / lev) if d == "LONG" else entry * (1 + 1 / lev)
     plan = {"direction": d, "entry": _r(entry), "stop_loss": _r(sl), "take_profit": _r(tp),
@@ -56,7 +67,7 @@ def build_proposal(symbol, c4h, c1h, c15, cfg=None, news=None):
         **plan, "symbol": symbol, "mode": cfg["mode"], "score_technical": a["score"],
         "score_fundamental": fs, "score_sentiment": None, "score_global": None,
         "tools": [r["name"] for r in used],
-        "reasons": ([x for r in used for x in r["reasons"]] + f["reasons"] + ([partial] if partial else []))[:16],
+        "reasons": ([x for r in used for x in r["reasons"]] + setup_reasons + f["reasons"] + ([partial] if partial else []))[:18],
         "news": [{"title": i["title"], "source": i["source"], "url": i["url"], "sentiment": i["sentiment"]}
                  for i in f["items"][:5]],
         "risks": ["Sentiment du marche pas encore actif (analyse technique + actualites seulement)",

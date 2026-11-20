@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 import requests
 
 GDELT_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
+NEWSAPI_URL = "https://newsapi.org/v2/everything"
 
 QUERIES = {
     "BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "XRP": "ripple XRP", "BNB": "binance BNB",
@@ -131,4 +132,102 @@ def prepare(items, now=None, max_age_hours=48):
         seen.update({key, tkey})
         s, imp = classify(it["title"])
         out.append({**it, "sentiment": s, "importance": imp, "reliability": reliability(it.get("source"))})
+    return out
+
+
+NEWSAPI_Q = {"XRP": "ripple OR XRP", "BNB": '"Binance Coin" OR BNB', "TRX": "tron OR TRX", "AVAX": "avalanche AND crypto",
+             "OP": '"Optimism" AND crypto', "UNI": "uniswap", "SUI": '"Sui" AND crypto', "TON": "toncoin OR \"The Open Network\"",
+             "XAUT": '"gold price" OR "Tether Gold"', "XAU": '"gold price"'}
+
+
+def newsapi_query(symbol):
+    base = symbol.split("_")[0]
+    if base in NEWSAPI_Q:
+        return NEWSAPI_Q[base]
+    term = QUERIES.get(base, f"{base} crypto")
+    return f'"{term}"' if " " in term else term
+
+
+class Budget:
+    """Compteur quotidien de requetes (le plan gratuit NewsAPI est limite) : on s'arrete AVANT la limite."""
+
+    def __init__(self, limit):
+        self.limit, self.day, self.n = int(limit), None, 0
+
+    def allow(self, today=None):
+        today = today or datetime.now(timezone.utc).date()
+        if today != self.day:
+            self.day, self.n = today, 0
+        return self.n < self.limit
+
+    def used(self):
+        self.n += 1
+
+
+def fetch_newsapi(symbol, key, session=None, max_age_hours=48, page_size=15, timeout=20, now=None):
+    """NewsAPI (/v2/everything). Source = domaine de l'URL (pour juger la fiabilite). Erreurs -> NewsError."""
+    if not key:
+        return []
+    now = now or datetime.now(timezone.utc)
+    params = {"q": newsapi_query(symbol), "language": "en", "sortBy": "publishedAt", "pageSize": page_size,
+              "from": (now - timedelta(hours=max_age_hours)).strftime("%Y-%m-%dT%H:%M:%S")}
+    try:
+        r = (session or requests).get(NEWSAPI_URL, params=params, headers={"X-Api-Key": key}, timeout=timeout)
+    except requests.RequestException as e:
+        raise NewsError(f"NewsAPI indisponible : {e}") from e
+    try:
+        data = r.json()
+    except ValueError as e:
+        raise NewsError(f"NewsAPI HTTP {r.status_code} sans JSON") from e
+    if r.status_code != 200 or data.get("status") != "ok":
+        raise NewsError(f"NewsAPI refuse ({r.status_code}) : {data.get('code', '')} {str(data.get('message', ''))[:120]}")
+    out = []
+    for a in data.get("articles", []):
+        try:
+            title, url = (a["title"] or "").strip(), a["url"]
+            pub = datetime.fromisoformat(a["publishedAt"].replace("Z", "+00:00"))
+            if not title or title == "[Removed]":
+                continue
+            out.append({"title": title, "url": url, "source": urlsplit(url).netloc.lower(),
+                        "published_at": pub if pub.tzinfo else pub.replace(tzinfo=timezone.utc), "provider": "newsapi"})
+        except (KeyError, ValueError, AttributeError):
+            continue
+    return out
+
+
+NEWSDATA_BASE = "https://newsdata.io/api/1"
+
+
+def fetch_newsdata(symbol, key, session=None, timeout=20, now=None):
+    """NewsData.io : endpoint /crypto (filtre coin) ; pour l'or, /latest avec recherche 'gold price'.
+    Plan gratuit : peu de resultats par requete et articles retardes. Erreurs -> NewsError."""
+    if not key:
+        return []
+    base = symbol.split("_")[0]
+    if is_gold(symbol):
+        url, params = f"{NEWSDATA_BASE}/latest", {"apikey": key, "q": '"gold price"', "language": "en"}
+    else:
+        url, params = f"{NEWSDATA_BASE}/crypto", {"apikey": key, "coin": base.lower(), "language": "en"}
+    try:
+        r = (session or requests).get(url, params=params, timeout=timeout)
+    except requests.RequestException as e:
+        raise NewsError(f"NewsData indisponible : {e}") from e
+    try:
+        data = r.json()
+    except ValueError as e:
+        raise NewsError(f"NewsData HTTP {r.status_code} sans JSON") from e
+    if r.status_code != 200 or data.get("status") != "success":
+        res = data.get("results")
+        msg = res.get("message", "") if isinstance(res, dict) else ""
+        raise NewsError(f"NewsData refuse ({r.status_code}) : {str(msg)[:120]}")
+    out = []
+    for a in data.get("results") or []:
+        try:
+            title, link = (a["title"] or "").strip(), a["link"]
+            pub = datetime.strptime(a["pubDate"][:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)  # UTC
+            if title:
+                out.append({"title": title, "url": link, "source": urlsplit(link).netloc.lower(),
+                            "published_at": pub, "provider": "newsdata"})
+        except (KeyError, ValueError, TypeError):
+            continue
     return out

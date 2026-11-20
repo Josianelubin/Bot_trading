@@ -1,4 +1,5 @@
 """Suivi des positions ouvertes : detecte la fermeture (SL/TP/manuelle) et enregistre le resultat."""
+from django.conf import settings
 from django.utils import timezone
 
 from apps.notifications import messages, telegram
@@ -8,7 +9,7 @@ from .gate_private import GateTradeError
 
 def sync_open_trades(trader, model):
     closed = 0
-    for t in model.objects.filter(exec_status="open"):
+    for t in model.objects.filter(exec_status="open", mode=settings.TRADING_MODE):
         try:
             pos = trader.position(t.symbol)
             if int(float(pos.get("size", 0))) != 0:

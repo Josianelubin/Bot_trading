@@ -22,7 +22,7 @@ from .models import TradeProposal
 def risk_state():
     """Etat reel pour la discipline : calcule sur les trades CLOTURES enregistres."""
     now = timezone.now()
-    closed = list(TradeProposal.objects.filter(exec_status="closed", net_pnl__isnull=False).order_by("-closed_at")[:20])
+    closed = list(TradeProposal.objects.filter(exec_status="closed", mode=settings.TRADING_MODE, net_pnl__isnull=False).order_by("-closed_at")[:20])
     today = sum(t.net_pnl for t in closed if t.closed_at and t.closed_at.date() == now.date())
     consecutive = 0
     for t in closed:
@@ -76,6 +76,9 @@ def detail(request, pk):
             flash.success(request, "Parametres enregistres. Aucun ordre envoye.")
             return redirect("trade_approval:detail", pk=pk)
         if action == "execute":
+            if obj.mode != settings.TRADING_MODE:
+                flash.error(request, f"Cette proposition a ete creee en mode {obj.mode} : elle ne peut pas etre executee en mode {settings.TRADING_MODE}.")
+                return redirect("trade_approval:detail", pk=pk)
             if emergency_active():
                 flash.error(request, "ARRET D'URGENCE actif : aucune nouvelle position n'est autorisee.")
                 return redirect("trade_approval:detail", pk=pk)
@@ -147,7 +150,7 @@ def positions(request):
         except GateTradeError as e:
             flash.error(request, f"Synchronisation impossible : {e}")
         return redirect("trade_approval:positions")
-    items = TradeProposal.objects.exclude(exec_status="none").exclude(exec_status="executing").order_by("-executed_at", "-created_at")
+    items = TradeProposal.objects.filter(mode=settings.TRADING_MODE).exclude(exec_status="none").exclude(exec_status="executing").order_by("-executed_at", "-created_at")
     closed = [t for t in items if t.exec_status == "closed" and t.net_pnl is not None]
     stats = {"wins": sum(1 for t in closed if t.net_pnl > 0), "losses": sum(1 for t in closed if t.net_pnl <= 0),
              "pnl": sum(t.net_pnl for t in closed), "n": len(closed)}

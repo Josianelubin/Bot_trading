@@ -8,15 +8,15 @@
   <link rel="apple-touch-icon" href="{% static 'images/nono-192.png' %}">
   <link rel="manifest" href="{% static 'manifest.webmanifest' %}">
   <meta name="theme-color" content="#0b1a3d">
-  <link rel="stylesheet" href="{% static 'css/live.css' %}?v=3">
+  <link rel="stylesheet" href="{% static 'css/live.css' %}?v=5">
   <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/lucide@0.469.0/dist/umd/lucide.min.js"></script>
 </head>
 <body>
 {% csrf_token %}
 <div id="cfg" data-symbol="{{ symbol }}" data-ws="{{ ws_url }}" data-mode="{{ mode }}" data-emergency="{{ emergency|yesno:'1,0' }}"
-     data-close="{% url 'live:close' 0 %}"
-     data-urls='{"candles":"{% url 'live:candles' %}","scan":"{% url 'live:scan' %}","prices":"{% url 'live:prices' %}","account":"{% url 'live:account' %}","emergency":"{% url 'live:emergency' %}","performance":"{% url 'live:performance' %}"}'></div>
+     data-close="{% url 'live:close' 0 %}" data-lev="{{ default_leverage }}" data-cap="{{ default_capital }}"
+     data-urls='{"candles":"{% url 'live:candles' %}","scan":"{% url 'live:scan' %}","prices":"{% url 'live:prices' %}","account":"{% url 'live:account' %}","emergency":"{% url 'live:emergency' %}","performance":"{% url 'live:performance' %}","backtest":"{% url 'live:backtest' %}","contracts":"{% url 'live:contracts' %}"}'></div>
 
 <header class="top">
   <div class="logo"><img src="{% static 'images/nono.png' %}" alt="KPS Trading Bot" class="logoimg" width="44" height="44" style="width:44px;height:44px"><div><div class="brand">KPS</div><div class="sub2">TRADING BOT</div></div></div>
@@ -60,6 +60,7 @@
         <div class="indmenu">
           <label><input type="checkbox" data-ind="ema" checked> EMA 9/21/50/200</label>
           <label><input type="checkbox" data-ind="bb" checked> Bollinger</label>
+          <label><input type="checkbox" data-ind="smc" checked> Smart Money (liquidite, structure, FVG, OB)</label>
           <label><input type="checkbox" data-ind="vwap"> VWAP</label>
           <label><input type="checkbox" data-ind="fib" checked> Fibonacci</label>
           <label><input type="checkbox" data-ind="vol" checked> Volume</label>
@@ -73,25 +74,33 @@
       <button id="btn-undo" title="Annuler"><i data-lucide="undo-2"></i></button><button id="btn-redo" title="Retablir"><i data-lucide="redo-2"></i></button>
       <button id="btn-shot" title="Capture d'image"><i data-lucide="camera"></i></button><button id="btn-full" title="Agrandir le graphique"><i data-lucide="maximize"></i></button>
     </div>
-    <div class="head"><i class="coin" id="head-coin">B</i><b id="title">{{ symbol }}</b> <span id="last">—</span> <span id="head-chg"></span> <span class="cd" title="Temps restant avant la cloture de la bougie en cours"><i data-lucide="timer"></i> <b id="countdown">--:--</b></span> <small id="livestate">connexion...</small></div>
+    <div class="head"><span id="head-logo" class="hlogo"></span><b id="title">{{ symbol }}</b> <span id="last">—</span> <span id="head-chg"></span> <span class="cd" title="Temps restant avant la cloture de la bougie en cours"><i data-lucide="timer"></i> <b id="countdown">--:--</b></span> <small id="livestate">connexion...</small></div>
     <div id="msg" class="msg"></div>
     <div class="chartwrap">
       <div id="legend" class="legend"></div>
       <div id="chart"></div>
+      <canvas id="zones"></canvas>
     </div>
     <div class="sublabel" id="lbl-rsi"></div><div id="rsi" class="sub"></div>
     <div class="sublabel" id="lbl-macd"></div><div id="macd" class="sub"></div>
     <div class="sublabel" id="lbl-stoch"></div><div id="stoch" class="sub"></div>
+    <small class="smclegend">Smart Money : vert = FVG / Order Block haussier, rouge = baissier · pointilles = liquidite (Buy-Side / Sell-Side, EQH / EQL) · bleu = CHoCH / BOS / MSS · HH, HL, LH, LL = structure · D = deplacement · Sweep = balayage de liquidite.</small>
     <small>Zoom : pince avec 2 doigts, ou boutons zoom +/-. Glisse horizontalement pour deplacer. Marche : Gate Futures USDT.</small>
   </section>
 
   <aside class="scan card" id="scanpanel">
     <div class="scanhead"><b><i data-lucide="scan-search"></i> Scanner d'Analyse</b><button id="btn-refresh" class="primary small">Actualiser</button></div>
     <div id="signal" class="signal wait"><b>—</b><small>Clique sur Scanner</small></div>
+    <div class="lev"><label>Capital (USDT) <input id="in-cap" type="number" min="1" step="1" value="{{ default_capital }}"></label>
+      <label>Levier <input id="in-lev" type="number" min="1" max="125" step="1" value="{{ default_leverage }}"></label></div>
     <div id="trend" class="trend"></div>
+    <div id="ict"></div>
     <div id="levels"></div>
+    <div id="potential"></div>
     <div class="ach"><i data-lucide="chart-candlestick"></i> Analyse Technique</div>
     <div id="confirms"></div>
+    <button id="btn-backtest" type="button"><i data-lucide="history"></i> Reussite historique (backtest)</button>
+    <div id="bt"></div>
     <label class="auto"><input type="checkbox" id="auto"> Scan automatique (60 s)</label>
     <button id="btn-scan" class="primary"><i data-lucide="scan-search"></i> Scanner</button>
     <small id="scan-cd"></small>
@@ -128,6 +137,6 @@
   <span class="market"><span class="dot" id="foot-dot"></span> Marches : <b id="foot-state">connexion...</b></span>
 </footer>
 <button id="fab-scan" class="fab" type="button"><i data-lucide="scan-search"></i> Scanner</button>
-<script src="{% static 'js/live.js' %}?v=3"></script>
+<script src="{% static 'js/live.js' %}?v=5"></script>
 </body>
 </html>

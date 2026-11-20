@@ -53,6 +53,10 @@ class Command(BaseCommand):
 
     def handle(self, *args, **o):
         self.dry, self.news_cache = o["dry_run"], {}
+        self.provider_cache = {"newsapi": {}, "newsdata": {}, "cryptopanic": {}}
+        self.budgets = {"newsapi": news_lib.Budget(settings.KPS_NEWSAPI_DAILY_LIMIT),
+                        "newsdata": news_lib.Budget(settings.KPS_NEWSDATA_DAILY_LIMIT),
+                        "cryptopanic": news_lib.Budget(500)}
         cfg = load_cfg()
         symbols = [s.strip() for s in o["symbols"].split(",") if s.strip()]
         self.stdout.write(f"KPS demarre | mode {settings.TRADING_MODE} | marge {settings.MARGIN_MODE} | "
@@ -73,7 +77,25 @@ class Command(BaseCommand):
                 break
             time.sleep(settings.KPS_SCAN_INTERVAL_SECONDS)
 
-    # ---- actualites (cache + limite de debit GDELT) ----
+    # ---- actualites : GDELT (sans cle) + fournisseurs a cle facultatifs (cache et budget quotidien) ----
+    def limited(self, name, sym, key, fetch, refresh_min):
+        """Fournisseur a cle : reponse mise en cache, et jamais plus que la limite quotidienne."""
+        if not key:
+            return [], 0
+        hit = self.provider_cache[name].get(sym)
+        if hit and time.time() - hit[0] < refresh_min * 60:
+            return hit[1], 0
+        if not self.budgets[name].allow():
+            return (hit[1] if hit else []), 0  # limite atteinte : derniere reponse reutilisee
+        self.budgets[name].used()
+        try:
+            got = fetch()
+            self.provider_cache[name][sym] = (time.time(), got)
+            return got, 0
+        except news_lib.NewsError as e:
+            self.stderr.write(f"{sym} : {e}")
+            return [], 1
+
     def get_news(self, sym):
         hit = self.news_cache.get(sym)
         if hit and time.time() - hit[0] < 1800:
@@ -85,12 +107,15 @@ class Command(BaseCommand):
             errors += 1
             self.stderr.write(f"{sym} : {e}")
         time.sleep(5.5)  # GDELT : ne pas depasser ~1 requete / 5 s
-        if settings.CRYPTOPANIC_API_KEY:
-            try:
-                items += news_lib.fetch_cryptopanic(sym, settings.CRYPTOPANIC_API_KEY, settings.CRYPTOPANIC_PLAN)
-            except news_lib.NewsError as e:
-                errors += 1
-                self.stderr.write(f"{sym} : {e}")
+        providers = (
+            ("newsapi", settings.NEWSAPI_KEY, lambda: news_lib.fetch_newsapi(sym, settings.NEWSAPI_KEY, max_age_hours=settings.KPS_NEWS_MAX_AGE_HOURS), settings.KPS_NEWSAPI_REFRESH_MINUTES),
+            ("newsdata", settings.NEWSDATA_API_KEY, lambda: news_lib.fetch_newsdata(sym, settings.NEWSDATA_API_KEY), settings.KPS_NEWSDATA_REFRESH_MINUTES),
+            ("cryptopanic", settings.CRYPTOPANIC_API_KEY, lambda: news_lib.fetch_cryptopanic(sym, settings.CRYPTOPANIC_API_KEY, settings.CRYPTOPANIC_PLAN), 30),
+        )
+        for name, key, fetch, refresh in providers:
+            got, err = self.limited(name, sym, key, fetch, refresh)
+            items += got
+            errors += err
         res = None if (errors and not items) else news_lib.prepare(items, max_age_hours=settings.KPS_NEWS_MAX_AGE_HOURS)
         self.news_cache[sym] = (time.time(), res)
         return res

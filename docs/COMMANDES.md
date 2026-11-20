@@ -32,3 +32,9 @@ http://127.0.0.1:8000/live/   (apres connexion, la page d'accueil y redirige)
 - SCANNER : analyse les bougies CLOTUREES du graphique -> entree / SL / TP1-3 ou ATTENTE
 - Direct : WebSocket Gate Futures USDT (repli : actualisation toutes les 10 s)
 - ARRET D'URGENCE : bloque toute NOUVELLE position
+
+## Strategie ICT du scanner (page /live/)
+Setup : CHoCH/MSS -> deplacement (imbalance) -> retracement en zone OTE (62-79 %) avec FVG / Order Block / sweep de liquidite
+Entree : milieu de la confluence FVG/OB dans l'OTE (sinon 70,5 %) ; Stop : sous l'origine de la jambe ; TP1 = sommet (liquidite), TP2/TP3 = extensions -27 % / -62 %
+Gain/perte potentiels : % du prix, % de la marge (x levier) et USDT, selon capital et levier saisis.
+Reussite/echec : bouton "Reussite historique (backtest)" = calcul sur l'historique reel, jamais invente.

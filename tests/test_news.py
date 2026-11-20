@@ -117,3 +117,80 @@ class MessageTests(TestCase):
         d = messages.format_news_digest([{"symbol": "BTC", "title": "T", "source": "s", "url": "u",
                                           "sentiment": "positif", "importance": 2, "reliability": "haute"}])
         self.assertIn("NOUVELLES", d)
+
+
+class NewsApiTests(TestCase):
+    def _session(self, status=200, payload=None):
+        s = MagicMock()
+        s.get.return_value = MagicMock(status_code=status, json=lambda: payload)
+        return s
+
+    def test_parsing_uses_domain_as_source(self):
+        payload = {"status": "ok", "articles": [
+            {"title": "Bitcoin ETF approved", "url": "https://www.reuters.com/markets/x", "publishedAt": "2026-11-16T10:00:00Z"},
+            {"title": "[Removed]", "url": "https://x.com/a", "publishedAt": "2026-11-16T10:00:00Z"},
+            {"title": "No date", "url": "https://x.com/b"}]}
+        s = self._session(payload=payload)
+        out = news.fetch_newsapi("BTC_USDT", "KEY", session=s, now=NOW)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["source"], "www.reuters.com")
+        self.assertEqual(news.reliability(out[0]["source"]), "haute")
+        self.assertEqual(s.get.call_args.kwargs["headers"], {"X-Api-Key": "KEY"})
+        self.assertEqual(s.get.call_args.kwargs["params"]["q"], "bitcoin")
+
+    def test_errors(self):
+        with self.assertRaises(news.NewsError):
+            news.fetch_newsapi("BTC_USDT", "KEY", session=self._session(429, {"status": "error", "code": "rateLimited", "message": "x"}), now=NOW)
+        with self.assertRaises(news.NewsError):
+            news.fetch_newsapi("BTC_USDT", "KEY", session=self._session(200, {"status": "error", "code": "apiKeyInvalid"}), now=NOW)
+
+    def test_no_key_no_request(self):
+        s = self._session(payload={})
+        self.assertEqual(news.fetch_newsapi("BTC_USDT", "", session=s), [])
+        s.get.assert_not_called()
+
+    def test_queries(self):
+        self.assertEqual(news.newsapi_query("XRP_USDT"), "ripple OR XRP")
+        self.assertEqual(news.newsapi_query("XAUT_USDT"), '"gold price" OR "Tether Gold"')
+        self.assertEqual(news.newsapi_query("DOGE_USDT"), "dogecoin")
+        self.assertEqual(news.newsapi_query("BCH_USDT"), '"bitcoin cash"')
+
+    def test_daily_budget_stops_before_limit(self):
+        from datetime import date
+        b = news.Budget(2)
+        d = date(2026, 11, 18)
+        self.assertTrue(b.allow(d)); b.used(); self.assertTrue(b.allow(d)); b.used()
+        self.assertFalse(b.allow(d))
+        self.assertTrue(b.allow(date(2026, 11, 19)))  # nouveau jour : compteur remis a zero
+
+
+class NewsDataTests(TestCase):
+    def _s(self, status=200, payload=None):
+        s = MagicMock()
+        s.get.return_value = MagicMock(status_code=status, json=lambda: payload)
+        return s
+
+    def test_crypto_endpoint_and_parsing(self):
+        payload = {"status": "success", "results": [
+            {"title": "Bitcoin ETF approved", "link": "https://www.coindesk.com/a", "pubDate": "2026-11-17 10:00:00"},
+            {"title": "", "link": "https://x.com/b", "pubDate": "2026-11-17 10:00:00"},
+            {"title": "Bad date", "link": "https://x.com/c", "pubDate": "n/a"}]}
+        s = self._s(payload=payload)
+        out = news.fetch_newsdata("BTC_USDT", "KEY", session=s)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["source"], "www.coindesk.com")
+        self.assertEqual(out[0]["published_at"].hour, 10)
+        self.assertTrue(s.get.call_args.args[0].endswith("/crypto"))
+        self.assertEqual(s.get.call_args.kwargs["params"]["coin"], "btc")
+
+    def test_gold_uses_latest_endpoint(self):
+        s = self._s(payload={"status": "success", "results": []})
+        news.fetch_newsdata("XAUT_USDT", "KEY", session=s)
+        self.assertTrue(s.get.call_args.args[0].endswith("/latest"))
+
+    def test_errors_and_no_key(self):
+        with self.assertRaises(news.NewsError):
+            news.fetch_newsdata("BTC_USDT", "KEY", session=self._s(401, {"status": "error", "results": {"message": "bad key"}}))
+        s = self._s(payload={})
+        self.assertEqual(news.fetch_newsdata("BTC_USDT", "", session=s), [])
+        s.get.assert_not_called()

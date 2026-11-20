@@ -3,7 +3,7 @@
 {% block content %}
 {% for m in messages %}<p class="card"><strong>{{ m }}</strong></p>{% endfor %}
 <section class="card">
-  <h1>{{ a.symbol }} - {{ a.direction }} {{ a.score }}/40</h1>
+  <h1><img src="https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/32/color/{{ a.symbol|cut:"_USDT"|lower }}.png" width="28" height="28" alt="" onerror="this.style.display='none'"> {{ a.symbol }} - {{ a.direction }} {{ a.score }}/40</h1>
   <p>Prix {{ a.price|default_if_none:"-" }} - mise a jour {{ a.updated_at|date:"d/m H:i" }} UTC - analyse technique + actualites (sentiment pas encore actif)</p>
   {% if a.chart_png %}<img src="{% url 'market_scanner:chart' a.symbol %}" style="width:100%" alt="graphique">
   <p><small>Jaune = entree, rouge = Stop Loss, vert = Take Profit, bleu = Bollinger, zones = Order Blocks / FVG valides.</small></p>{% endif %}

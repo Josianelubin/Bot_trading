@@ -7,8 +7,10 @@
   var state = { symbol: cfg.dataset.symbol || "BTC_USDT", tf: "1h", ws: null, wsOk: false, lines: [], fibLines: [], tick: 0 };
   var csrf = document.querySelector("input[name=csrfmiddlewaretoken]").value;
   var $ = function (id) { return document.getElementById(id); };
-  var prices = {}, L = {}, fibData = null, fibOn = true;
+  var prices = {}, L = {}, fibData = null, fibOn = true, headSym = null;
+  var smc = null, smcOn = true, markerBase = [], markerScan = [], zsig = "";
   var ALL = Array.prototype.map.call(document.querySelectorAll(".pair"), function (e) { return e.dataset.sym; });
+  var lastScan = null;
 
   function icons() { try { if (window.lucide && window.lucide.createIcons) window.lucide.createIcons(); } catch (e) {} }
   function ic(name) { return '<i data-lucide="' + name + '"></i>'; }
@@ -86,6 +88,56 @@
   macdChart.subscribeCrosshairMove(function (p) { if (p.time && p.seriesData) $("lbl-macd").textContent = "MACD (12, 26, 9)  " + f(val(p, mLine)) + "  " + f(val(p, mSig)) + "  " + f(val(p, mHist)); });
   stochChart.subscribeCrosshairMove(function (p) { if (p.time && p.seriesData) $("lbl-stoch").textContent = "Stoch RSI (14, 14, 3, 3)  " + f(val(p, sK)) + "  " + f(val(p, sD)); });
 
+  // ---- Smart Money sur le graphique : zones (canvas) + etiquettes (marqueurs) ----
+  var zc = $("zones"), zx = zc.getContext("2d");
+  function setMarkers() { candle.setMarkers(markerBase.concat(markerScan).sort(function (a, b) { return a.time - b.time; })); }
+  function smcMarkers() {
+    markerBase = [];
+    if (smc && smcOn) {
+      smc.labels.forEach(function (l) { markerBase.push({ time: l.time, position: l.pos === "above" ? "aboveBar" : "belowBar", color: (l.label === "HH" || l.label === "HL") ? "#22c55e" : "#ef4444", shape: "circle", text: l.label }); });
+      smc.displacement.forEach(function (d) { markerBase.push({ time: d.time, position: "inBar", color: "#fb923c", shape: "circle", text: "D" }); });
+      smc.sweeps.forEach(function (sw) { markerBase.push({ time: sw.time, position: sw.side === "BSL" ? "aboveBar" : "belowBar", color: "#facc15", shape: "square", text: "Sweep" }); });
+    }
+    setMarkers();
+  }
+  function rightEdge() { var w = $("chart").clientWidth, pw = 0; try { pw = chart.priceScale("right").width(); } catch (e) {} return w - (pw || 58); }
+  function drawSmc() {
+    var w = $("chart").clientWidth, h = $("chart").clientHeight, dpr = window.devicePixelRatio || 1;
+    if (!w || !h) return;
+    if (zc.width !== Math.round(w * dpr) || zc.height !== Math.round(h * dpr)) { zc.width = Math.round(w * dpr); zc.height = Math.round(h * dpr); zc.style.width = w + "px"; zc.style.height = h + "px"; }
+    zx.setTransform(dpr, 0, 0, dpr, 0, 0); zx.clearRect(0, 0, w, h);
+    if (!smc || !smcOn) return;
+    var ts = chart.timeScale(), R = rightEdge();
+    function X(t) { var x = ts.timeToCoordinate(t); return x === null || x === undefined ? 0 : Math.max(0, x); }
+    function Y(p) { return candle.priceToCoordinate(p); }
+    function box(z, color, label) {
+      var y0 = Y(z.hi), y1 = Y(z.lo); if (y0 === null || y1 === null) return;
+      var x0 = X(z.time); if (x0 >= R) return;
+      zx.fillStyle = color; zx.fillRect(x0, Math.min(y0, y1), R - x0, Math.max(2, Math.abs(y1 - y0)));
+      zx.fillStyle = "#e2e8f0"; zx.font = "11px sans-serif"; zx.fillText(label, x0 + 4, Math.min(y0, y1) + 11);
+    }
+    smc.fvg.forEach(function (z) { box(z, z.type === "bullish" ? "rgba(34,197,94,0.20)" : "rgba(239,68,68,0.20)", "FVG"); });
+    smc.ob.forEach(function (z) { box(z, z.type === "bullish" ? "rgba(34,197,94,0.34)" : "rgba(239,68,68,0.34)", "Order Block"); });
+    smc.liquidity.forEach(function (l) {
+      var y = Y(l.price); if (y === null) return;
+      var x0 = X(l.time), col = l.side === "BSL" ? "#f87171" : "#4ade80";
+      zx.strokeStyle = col; zx.fillStyle = col; zx.lineWidth = l.equal ? 2 : 1; zx.setLineDash([6, 4]);
+      zx.beginPath(); zx.moveTo(x0, y); zx.lineTo(R, y); zx.stroke(); zx.setLineDash([]);
+      zx.font = "11px sans-serif"; zx.fillText((l.equal ? (l.side === "BSL" ? "EQH · " : "EQL · ") : "") + (l.side === "BSL" ? "Buy-Side Liquidity" : "Sell-Side Liquidity"), Math.max(x0 + 4, R - 165), y - 3);
+    });
+    smc.events.forEach(function (e) {
+      var y = Y(e.level); if (y === null) return;
+      var x0 = X(e.from), x1 = X(e.to);
+      zx.strokeStyle = "#60a5fa"; zx.lineWidth = 1; zx.setLineDash([4, 3]); zx.beginPath(); zx.moveTo(x0, y); zx.lineTo(x1, y); zx.stroke(); zx.setLineDash([]);
+      zx.fillStyle = "#93c5fd"; zx.font = "bold 11px sans-serif"; zx.fillText(e.type, (x0 + x1) / 2 - 12, y - 3);
+    });
+  }
+  setInterval(function () {   // redessine quand le graphique bouge (zoom, deplacement, echelle de prix)
+    var r = chart.timeScale().getVisibleLogicalRange(), y = L.ohlc ? candle.priceToCoordinate(L.ohlc.close) : 0;
+    var sig = [r && r.from, r && r.to, y, $("chart").clientWidth, $("chart").clientHeight].join();
+    if (sig !== zsig) { zsig = sig; drawSmc(); }
+  }, 200);
+
   // ---- Fibonacci ----
   function drawFib() {
     state.fibLines.forEach(function (l) { candle.removePriceLine(l); }); state.fibLines = [];
@@ -110,13 +162,14 @@
       sk: (last(d.stoch_k) || {}).value, sd: (last(d.stoch_d) || {}).value };
     $("last").textContent = f(c.close); paintLegend(L);
     fibData = d.fib; drawFib();
+    smc = d.smc || null; smcMarkers(); drawSmc();
   }
   function fetchAndPaint() {
     return api(URLS.candles + "?symbol=" + state.symbol + "&tf=" + state.tf).then(function (d) { paint(d); msg(""); }).catch(function (e) { msg(e.message); });
   }
   function headInfo() {
     $("title").textContent = state.symbol.replace("_", "/") + " · " + state.tf.toUpperCase();
-    $("head-coin").textContent = state.symbol.slice(0, 1);
+    if (headSym !== state.symbol) { headSym = state.symbol; $("head-logo").innerHTML = logoHTML(state.symbol); }
     var p = prices[state.symbol];
     if (p) { var e = $("head-chg"); e.textContent = (p.change >= 0 ? "+" : "") + p.change.toFixed(2) + "%"; e.className = p.change >= 0 ? "up" : "down"; }
   }
@@ -150,6 +203,14 @@
   }
   var paintQueued = false;
   function queuePaint() { if (paintQueued) return; paintQueued = true; requestAnimationFrame(function () { paintQueued = false; paintPairs(); headInfo(); }); }
+  function watchedSymbols() {
+    var set = {}; ALL.forEach(function (x) { set[x] = 1; }); set[state.symbol] = 1;
+    document.querySelectorAll("#openpos tr[data-sym]").forEach(function (tr) { set[tr.dataset.sym] = 1; });
+    return Object.keys(set).slice(0, 150);
+  }
+  function subscribeTickers() {
+    if (state.ws && state.ws.readyState === 1) state.ws.send(JSON.stringify({ time: Math.floor(Date.now() / 1000), channel: "futures.tickers", event: "subscribe", payload: watchedSymbols() }));
+  }
   function connectLive() {
     stopLive();
     var sym = state.symbol, tf = state.tf, ws;
@@ -158,7 +219,7 @@
     ws.onopen = function () {
       var now = Math.floor(Date.now() / 1000);
       ws.send(JSON.stringify({ time: now, channel: "futures.candlesticks", event: "subscribe", payload: [TF_WS[tf], sym] }));
-      ws.send(JSON.stringify({ time: now, channel: "futures.tickers", event: "subscribe", payload: ALL }));
+      subscribeTickers();
     };
     ws.onmessage = function (ev) {
       var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
@@ -180,32 +241,65 @@
   }, 10000);
 
   // ---- scanner ----
-  function clearScan() { state.lines.forEach(function (l) { candle.removePriceLine(l); }); state.lines = []; candle.setMarkers([]); }
-  function addLine(price, color, title) { state.lines.push(candle.createPriceLine({ price: price, color: color, lineWidth: 2, lineStyle: 0, axisLabelVisible: true, title: title })); }
+  function clearScan() { state.lines.forEach(function (l) { candle.removePriceLine(l); }); state.lines = []; markerScan = []; setMarkers(); }
+  function addLine(price, color, title, style) { state.lines.push(candle.createPriceLine({ price: price, color: color, lineWidth: 2, lineStyle: style || 0, axisLabelVisible: true, title: title })); }
   function row(ico, l, v, cls) { return '<div class="lv"><span>' + ic(ico) + " " + l + '</span><b class="' + (cls || "") + '">' + v + "</b></div>"; }
+  function pct(v) { return (v >= 0 ? "+" : "") + v.toFixed(2) + " %"; }
+  function usdt(v) { return (v >= 0 ? "+" : "") + v.toFixed(2) + " USDT"; }
+  function renderPotential() {
+    var r = lastScan; if (!r || r.entry === undefined) { $("potential").innerHTML = ""; return; }
+    var lev = Math.max(1, parseFloat($("in-lev").value) || 1), cap = Math.max(1, parseFloat($("in-cap").value) || 1), sign = r.direction === "LONG" ? 1 : -1;
+    var risk = Math.abs(r.entry - r.stop_loss), h = '<div class="pot"><b>Gain / perte potentiels</b><small> (capital ' + cap + " USDT, levier x" + lev + ")</small>";
+    r.take_profits.forEach(function (tp, i) {
+      var g = sign * (tp - r.entry) / r.entry * 100;
+      h += '<div class="lv"><span>TP' + (i + 1) + " : " + f(tp) + '</span><b class="up">' + pct(g) + " prix · " + pct(g * lev) + " marge · ≈ " + usdt(cap * g * lev / 100) + " · R " + (Math.abs(tp - r.entry) / risk).toFixed(1) + "</b></div>";
+    });
+    var l = sign * (r.stop_loss - r.entry) / r.entry * 100;
+    h += '<div class="lv"><span>Stop Loss : ' + f(r.stop_loss) + '</span><b class="down">' + pct(l) + " prix · " + pct(l * lev) + " marge · ≈ " + usdt(cap * l * lev / 100) + "</b></div>";
+    var liq = r.direction === "LONG" ? r.entry * (1 - 1 / lev) : r.entry * (1 + 1 / lev);
+    h += "<small>Liquidation approx. " + f(liq) + " (marge isolee, hors frais). Hors frais et funding : le levier multiplie gains ET pertes.</small>";
+    if (risk / r.entry >= 0.8 / lev) h += '<small class="down">ATTENTION : le Stop Loss est au-dela de la liquidation. Reduis le levier.</small>';
+    h += '<small>Probabilite de reussite : cliquer sur « Reussite historique » (calculee sur des donnees reelles, jamais inventee).</small></div>';
+    $("potential").innerHTML = h;
+  }
+  $("in-cap").oninput = renderPotential; $("in-lev").oninput = renderPotential;
+  function drawIct(r) {
+    var z = r.ict; if (!z) return;
+    var long = z.direction === "LONG";
+    addLine(z.zone[1], "#a78bfa", long ? "OTE 62%" : "OTE 79%", 2); addLine(z.zone[0], "#a78bfa", long ? "OTE 79%" : "OTE 62%", 2);
+    addLine(z.equilibrium, "#64748b", "50% (equilibre)", 2); addLine(z.invalidation, "#fb923c", "Invalidation", 2);
+  }
   function scan() {
-    $("signal").className = "signal wait"; $("signal").innerHTML = "<b>Analyse...</b>";
-    api(URLS.scan + "?symbol=" + state.symbol + "&tf=" + state.tf).then(function (r) {
-      clearScan();
+    $("signal").className = "signal wait"; $("signal").innerHTML = "<b>Analyse...</b>"; $("bt").innerHTML = "";
+    var q = "&lev=" + encodeURIComponent($("in-lev").value) + "&cap=" + encodeURIComponent($("in-cap").value);
+    api(URLS.scan + "?symbol=" + state.symbol + "&tf=" + state.tf + q).then(function (r) {
+      clearScan(); lastScan = r;
       var cls = r.direction === "LONG" ? "long" : r.direction === "SHORT" ? "short" : "wait";
       var sc = r.score !== undefined ? " · Score : " + r.score + "/" + r.max_score + " (" + Math.round(100 * r.score / r.max_score) + " %)" : "";
+      var lim = r.status === "signal_limite" ? " (ordre limite)" : "";
       $("signal").className = "signal " + cls;
-      $("signal").innerHTML = "<b>" + (r.direction === "ATTENTE" ? ic("circle-x") + " ATTENTE" : ic("circle-check") + " Signal : " + r.direction) + "</b><small>" + (r.message || "") + sc + "</small>";
+      $("signal").innerHTML = "<b>" + (r.direction === "ATTENTE" ? ic("circle-x") + " ATTENTE" : ic("circle-check") + " Signal : " + r.direction + lim) + "</b><small>" + (r.message || "") + sc + "</small>";
       var arrow = r.trend && r.trend.indexOf("Haussi") === 0 ? " ↗" : r.trend && r.trend.indexOf("Baissi") === 0 ? " ↘" : "";
-      $("trend").textContent = "Tendance : " + (r.trend || "—") + arrow;
+      $("trend").textContent = "Tendance : " + (r.trend || "—") + arrow + (r.htf ? " · " + r.htf.toUpperCase() + " : " + ({ UP: "haussiere", DOWN: "baissiere", RANGE: "range" }[r.htf_trend] || "indeterminee") : "");
       var h = row("coins", "Crypto", r.symbol.replace("_", "/")) + row("clock", "Timeframe", r.timeframe);
-      if (r.status === "signal") {
-        h += row("target", "Point d'Entree", f(r.entry) + " USDT", "up") + row("circle-check", "Take Profit 1", f(r.take_profits[0]) + " USDT", "up") +
-          row("circle-check", "Take Profit 2", f(r.take_profits[1]) + " USDT", "up") + row("circle-check", "Take Profit 3", f(r.take_profits[2]) + " USDT", "up") +
-          row("octagon-x", "Stop Loss", f(r.stop_loss) + " USDT", "down");
+      if (r.entry !== undefined) {
+        h += row("target", r.entry_mode === "attente" ? "Entree LIMITE (zone OTE)" : "Point d'Entree", f(r.entry) + " USDT", "up") +
+          row("circle-check", "Take Profit 1", f(r.take_profits[0]) + " USDT", "up") + row("circle-check", "Take Profit 2", f(r.take_profits[1]) + " USDT", "up") +
+          row("circle-check", "Take Profit 3", f(r.take_profits[2]) + " USDT", "up") + row("octagon-x", "Stop Loss", f(r.stop_loss) + " USDT", "down");
+        if (r.aligned_strategies !== undefined) h += row("chart-candlestick", "Strategies alignees", r.aligned_strategies + " / 10");
         addLine(r.entry, "#22c55e", "Entree : " + f(r.entry)); addLine(r.stop_loss, "#ef4444", "SL : " + f(r.stop_loss));
         r.take_profits.forEach(function (p, i) { addLine(p, "#4ade80", "TP" + (i + 1) + " : " + f(p)); });
+        drawIct(r);
         api(URLS.candles + "?symbol=" + state.symbol + "&tf=" + state.tf).then(function (d) {
           var c = d.candles[d.candles.length - 2] || d.candles[d.candles.length - 1], long = r.direction === "LONG";
-          candle.setMarkers([{ time: c.time, position: long ? "belowBar" : "aboveBar", color: long ? "#22c55e" : "#ef4444", shape: long ? "arrowUp" : "arrowDown", text: r.direction }]);
+          markerScan = [{ time: c.time, position: long ? "belowBar" : "aboveBar", color: long ? "#22c55e" : "#ef4444", shape: long ? "arrowUp" : "arrowDown", text: r.direction }]; setMarkers();
         });
       }
       $("levels").innerHTML = h;
+      var z = r.ict;
+      $("ict").innerHTML = z ? '<div class="ictbox"><b>Setup ICT · grade ' + z.grade + " (" + z.score + "/" + z.max + ")</b><div>" +
+        z.confluences.map(function (x) { return '<span class="chip">' + x + "</span>"; }).join("") + "</div><small>" + z.reasons.slice(0, 4).join("<br>") + "</small></div>" : "";
+      renderPotential();
       $("confirms").innerHTML = (r.confirmations || []).map(function (c) {
         return '<div class="conf"><span>' + c.name + " : " + (c.value === null ? "—" : c.value) + "</span><span>" + c.verdict + "</span></div>";
       }).join("");
@@ -213,6 +307,19 @@
       $("scan-time").textContent = "Calcule le " + r.timestamp.replace("T", " ").replace("+00:00", " UTC") + " · bougies cloturees · " + r.market;
     }).catch(function (e) { $("signal").className = "signal wait"; $("signal").innerHTML = "<b>Indisponible</b><small>" + e.message + "</small>"; });
   }
+  $("btn-backtest").onclick = function () {
+    $("bt").innerHTML = "<small>Calcul sur l'historique reel... (quelques secondes)</small>";
+    api(URLS.backtest + "?symbol=" + state.symbol + "&tf=" + state.tf).then(function (b) {
+      if (!b.trades) { $("bt").innerHTML = '<div class="pot"><small>Aucun trade conclu sur ' + b.candles + " bougies : pas de statistique. " + b.warning + "</small></div>"; return; }
+      $("bt").innerHTML = '<div class="pot"><b>Historique reel de cette strategie</b><small> (' + b.candles + " bougies " + b.timeframe + ")</small>" +
+        '<div class="lv"><span>Trades conclus</span><b>' + b.trades + "</b></div>" +
+        '<div class="lv"><span>TP1 atteint avant le SL (reussite)</span><b class="up">' + b.rate_tp1 + " %</b></div>" +
+        '<div class="lv"><span>SL touche avant TP1 (echec)</span><b class="down">' + b.fail_rate + " %</b></div>" +
+        '<div class="lv"><span>TP2 atteint avant le SL</span><b>' + b.rate_tp2 + " %</b></div>" +
+        '<div class="lv"><span>Gain moyen (sortie TP1 / TP2)</span><b>' + b.avg_r_tp1 + " R / " + b.avg_r_tp2 + " R</b></div>" +
+        "<small" + (b.reliable ? "" : ' class="down"') + ">" + b.warning + "</small></div>";
+    }).catch(function (e) { $("bt").innerHTML = "<small class='down'>" + e.message + "</small>"; });
+  };
   var autoTimer = null;
   $("auto").onchange = function () { if (autoTimer) { clearInterval(autoTimer); autoTimer = null; } if ($("auto").checked) { scan(); autoTimer = setInterval(scan, 60000); } };
 
@@ -239,8 +346,43 @@
   $("btn-undo").onclick = function () { var d = drawings.pop(); if (d) { removeDraw(d); redo.push(d); } };
   $("btn-redo").onclick = function () { var d = redo.pop(); if (d) place(d); };
 
-  // ---- liste des paires / prix / positions ----
+  // ---- logos des cryptos (CDN, avec repli puis pastille de lettres) ----
+  var LOGO_SRC = [
+    function (b) { return "https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/" + b + ".png"; },
+    function (b) { return "https://assets.coincap.io/assets/icons/" + b + "@2x.png"; }
+  ];
+  function logoBase(sym) { return sym.split("_")[0].toLowerCase().replace(/^(1000000|100000|10000|1000|1m)/, ""); }
+  function hue(b) { var h = 0; for (var i = 0; i < b.length; i++) h = (h * 31 + b.charCodeAt(i)) % 360; return "hsl(" + h + ",55%,40%)"; }
+  window.kpsLogoErr = function (img) {
+    var i = (+img.dataset.i || 0) + 1;
+    if (i < LOGO_SRC.length) { img.dataset.i = i; img.src = LOGO_SRC[i](img.dataset.b); return; }
+    var s = document.createElement("i"); s.className = "coin"; s.style.background = hue(img.dataset.b); s.textContent = img.dataset.b.slice(0, 3).toUpperCase(); img.replaceWith(s);
+  };
+  function logoHTML(sym) {
+    var b = logoBase(sym);
+    if (/^xau/.test(b)) return '<i class="coin gold">Au</i>';
+    return '<img class="coinimg" loading="lazy" alt="" data-b="' + b + '" data-i="0" src="' + LOGO_SRC[0](b) + '" onerror="kpsLogoErr(this)">';
+  }
+
+  // ---- liste de TOUTES les paires / prix / positions ----
   var favs = []; try { favs = JSON.parse(localStorage.getItem("kps_favs") || "[]"); } catch (e) {}
+  var allPairs = [], extras = [], tab = "crypto";
+  function isGold(sym) { return extras.indexOf(sym) >= 0 || /^xau/.test(logoBase(sym)); }
+  function pairRow(sym) {
+    return '<div class="pair" data-sym="' + sym + '">' + logoHTML(sym) + "<span>" + sym.replace("_USDT", "") + '/USDT</span><b class="px">—</b><em class="chg">—</em><u class="star">☆</u></div>';
+  }
+  function renderPairs() {
+    var q = $("search").value.toUpperCase().trim(), list;
+    if (!allPairs.length) { return; }
+    if (tab === "fav") list = favs.slice();
+    else if (tab === "gold") list = allPairs.map(function (p) { return p.symbol; }).filter(isGold);
+    else list = allPairs.map(function (p) { return p.symbol; }).filter(function (s) { return !isGold(s); });
+    if (q) list = list.filter(function (s) { return s.indexOf(q) >= 0; });
+    var shown = list.slice(0, 80);
+    if (shown.indexOf(state.symbol) < 0 && !q && tab === "crypto") shown.unshift(state.symbol);
+    $("pairlist").innerHTML = shown.length ? shown.map(pairRow).join("") : "<small>Aucune paire.</small>";
+    ALL = shown.slice(); paintPairs(); subscribeTickers();
+  }
   function paintPairs() {
     document.querySelectorAll(".pair").forEach(function (el) {
       var s = el.dataset.sym, p = prices[s];
@@ -256,26 +398,24 @@
     });
   }
   function loadPrices() { api(URLS.prices).then(function (d) { for (var k in d) prices[k] = d[k]; paintPairs(); headInfo(); }).catch(function () {}); }
-  var tab = "crypto";
-  function filterPairs() {
-    var q = $("search").value.toUpperCase();
-    document.querySelectorAll(".pair").forEach(function (el) {
-      var ok = el.dataset.sym.indexOf(q) >= 0 && (tab === "fav" ? favs.indexOf(el.dataset.sym) >= 0 : el.dataset.group === tab);
-      el.style.display = ok ? "" : "none";
-    });
+  function loadContracts() {
+    api(URLS.contracts).then(function (d) {
+      allPairs = d.pairs; extras = d.extras || [];
+      d.pairs.forEach(function (p) { prices[p.symbol] = { price: p.price, change: p.change }; });
+      renderPairs(); headInfo();
+    }).catch(function (e) { msg(e.message); });
   }
   document.querySelectorAll(".tab").forEach(function (b) { b.onclick = function () {
-    document.querySelectorAll(".tab").forEach(function (x) { x.classList.remove("on"); }); b.classList.add("on"); tab = b.dataset.tab; filterPairs(); }; });
-  $("search").oninput = filterPairs;
-  document.querySelectorAll(".pair").forEach(function (el) {
-    el.onclick = function (ev) {
-      if (ev.target.classList.contains("star")) {
-        var i = favs.indexOf(el.dataset.sym); if (i >= 0) favs.splice(i, 1); else favs.push(el.dataset.sym);
-        try { localStorage.setItem("kps_favs", JSON.stringify(favs)); } catch (e) {} paintPairs(); filterPairs(); return;
-      }
-      state.symbol = el.dataset.sym; paintPairs(); load();
-    };
-  });
+    document.querySelectorAll(".tab").forEach(function (x) { x.classList.remove("on"); }); b.classList.add("on"); tab = b.dataset.tab; renderPairs(); }; });
+  $("search").oninput = renderPairs;
+  $("pairlist").onclick = function (ev) {
+    var el = ev.target.closest(".pair"); if (!el) return;
+    if (ev.target.classList.contains("star")) {
+      var i = favs.indexOf(el.dataset.sym); if (i >= 0) favs.splice(i, 1); else favs.push(el.dataset.sym);
+      try { localStorage.setItem("kps_favs", JSON.stringify(favs)); } catch (e) {} paintPairs(); if (tab === "fav") renderPairs(); return;
+    }
+    state.symbol = el.dataset.sym; paintPairs(); load();
+  };
   document.querySelectorAll("#tfs button").forEach(function (b) { b.onclick = function () {
     document.querySelectorAll("#tfs button").forEach(function (x) { x.classList.remove("on"); }); b.classList.add("on"); state.tf = b.dataset.tf; load(); }; });
 
@@ -287,6 +427,7 @@
     if (k === "vwap") vwap.applyOptions({ visible: on });
     if (k === "vol") vol.applyOptions({ visible: on });
     if (k === "fib") { fibOn = on; drawFib(); }
+    if (k === "smc") { smcOn = on; smcMarkers(); drawSmc(); }
     ["rsi", "macd", "stoch"].forEach(function (s) { if (k === s) { $(s).style.display = on ? "" : "none"; $("lbl-" + s).style.display = on ? "" : "none"; resizeAll(); } });
   }; });
 
@@ -358,6 +499,6 @@
   $("perf-days").onchange = loadPerf;
 
   icons(); paintLegend({});
-  load(); loadPrices(); loadAccount(); loadPerf(); filterPairs(); resizeAll();
-  setInterval(loadPrices, 10000); setInterval(loadAccount, 30000); setInterval(loadPerf, 60000);
+  load(); loadContracts(); loadPrices(); loadAccount(); loadPerf(); resizeAll();
+  setInterval(loadPrices, 10000); setInterval(loadContracts, 300000); setInterval(loadAccount, 30000); setInterval(loadPerf, 60000);
 })();

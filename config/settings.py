@@ -192,3 +192,13 @@ KPS_NEWS_PER_CYCLE = _num("KPS_NEWS_PER_CYCLE", 10, int)
 KPS_REPORT_ALL_CHARTS = env_bool("KPS_REPORT_ALL_CHARTS", False)
 CRYPTOPANIC_API_KEY = os.environ.get("CRYPTOPANIC_API_KEY", "")
 CRYPTOPANIC_PLAN = os.environ.get("CRYPTOPANIC_PLAN", "developer")
+
+# --- NewsAPI (plan gratuit : limite quotidienne, usage developpement) ---
+NEWSAPI_KEY = os.environ.get("NEWSAPI_KEY", "")
+KPS_NEWSAPI_DAILY_LIMIT = _num("KPS_NEWSAPI_DAILY_LIMIT", 90, int)
+KPS_NEWSAPI_REFRESH_MINUTES = _num("KPS_NEWSAPI_REFRESH_MINUTES", 360, int)
+
+# --- NewsData.io (gratuit, remplace CryptoPanic) ---
+NEWSDATA_API_KEY = os.environ.get("NEWSDATA_API_KEY", "")
+KPS_NEWSDATA_DAILY_LIMIT = _num("KPS_NEWSDATA_DAILY_LIMIT", 150, int)
+KPS_NEWSDATA_REFRESH_MINUTES = _num("KPS_NEWSDATA_REFRESH_MINUTES", 240, int)
