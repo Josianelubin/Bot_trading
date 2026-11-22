@@ -38,6 +38,9 @@
   var ema = { e9: line("#38bdf8"), e21: line("#f59e0b"), e50: line("#e879f9"), e200: line("#f8fafc") };
   var bb = { up: line("#3b82f6"), lo: line("#3b82f6"), mid: line("#64748b") };
   var vwap = line("#22d3ee"); vwap.applyOptions({ visible: false });
+  var ma = { m5: line("#fbbf24"), m10: line("#34d399"), m30: line("#f59e0b") };
+  Object.keys(ma).forEach(function (k) { ma[k].applyOptions({ visible: false }); });
+  var maOn = false;
   var rsi = rsiChart.addLineSeries({ color: "#a78bfa", lineWidth: 1 });
   rsi.createPriceLine({ price: 70, color: "#64748b", lineStyle: 2 }); rsi.createPriceLine({ price: 30, color: "#64748b", lineStyle: 2 });
   var mLine = macdChart.addLineSeries({ color: "#38bdf8", lineWidth: 1 }), mSig = macdChart.addLineSeries({ color: "#f59e0b", lineWidth: 1 });
@@ -69,6 +72,7 @@
     h += '<div style="color:#f59e0b">EMA 21 close 0 &nbsp; ' + f(v.e21) + "</div>";
     h += '<div style="color:#e879f9">EMA 50 close 0 &nbsp; ' + f(v.e50) + "</div>";
     h += '<div style="color:#f8fafc">EMA 200 close 0 &nbsp; ' + f(v.e200) + "</div>";
+    if (maOn) h += '<div><span style="color:#fbbf24">MA5 ' + f(v.ma5) + '</span> <span style="color:#34d399">MA10 ' + f(v.ma10) + '</span> <span style="color:#f59e0b">MA30 ' + f(v.ma30) + "</span></div>";
     h += '<div style="color:#26a69a">Volume ' + f(v.vol) + "</div>";
     $("legend").innerHTML = h;
     $("lbl-rsi").textContent = "RSI (14)  " + f(v.rsi);
@@ -125,6 +129,19 @@
       zx.beginPath(); zx.moveTo(x0, y); zx.lineTo(R, y); zx.stroke(); zx.setLineDash([]);
       zx.font = "11px sans-serif"; zx.fillText((l.equal ? (l.side === "BSL" ? "EQH · " : "EQL · ") : "") + (l.side === "BSL" ? "Buy-Side Liquidity" : "Sell-Side Liquidity"), Math.max(x0 + 4, R - 165), y - 3);
     });
+    function extreme(e, high, label, col, rgba, dash, atr) {
+      var y = Y(e.price); if (y === null) return;
+      var x0 = X(e.time), yb = atr ? Y(e.price + (high ? 1 : -1) * 0.15 * atr) : null;
+      if (yb !== null) { zx.fillStyle = rgba; zx.fillRect(x0, Math.min(y, yb), R - x0, Math.max(2, Math.abs(yb - y))); }
+      zx.strokeStyle = col; zx.fillStyle = col; zx.lineWidth = 1; zx.setLineDash(dash);
+      zx.beginPath(); zx.moveTo(x0, y); zx.lineTo(R, y); zx.stroke(); zx.setLineDash([]);
+      zx.font = "11px sans-serif"; zx.fillText(f(e.price), x0 + 2, high ? y - 4 : y + 12);
+      zx.fillText(label + " " + f(e.price) + (high ? " (liquidite haute)" : " (liquidite basse)"), Math.max(x0 + 4, R - 210), high ? y - 4 : y + 12);
+    }
+    var a24 = smc.range24;
+    if (a24) { extreme(a24.high, true, "24h High", "#f87171", "rgba(248,113,113,0.16)", [2, 3], a24.atr); extreme(a24.low, false, "24h Low", "#4ade80", "rgba(74,222,128,0.16)", [2, 3], a24.atr); }
+    var pd = smc.prev_day;
+    if (pd) { extreme(pd.high, true, "PDH", "#fbbf24", "rgba(251,191,36,0.12)", [8, 4], a24 ? a24.atr : 0); extreme(pd.low, false, "PDL", "#38bdf8", "rgba(56,189,248,0.12)", [8, 4], a24 ? a24.atr : 0); }
     smc.events.forEach(function (e) {
       var y = Y(e.level); if (y === null) return;
       var x0 = X(e.from), x1 = X(e.to);
@@ -153,16 +170,20 @@
     vol.setData(d.candles.map(function (c) { return { time: c.time, value: c.volume, color: c.close >= c.open ? "#26a69a66" : "#ef535066" }; }));
     ema.e9.setData(d.ema9); ema.e21.setData(d.ema21); ema.e50.setData(d.ema50); ema.e200.setData(d.ema200);
     bb.up.setData(d.bb_upper); bb.lo.setData(d.bb_lower); bb.mid.setData(d.bb_middle); vwap.setData(d.vwap);
+    ma.m5.setData(d.ma5); ma.m10.setData(d.ma10); ma.m30.setData(d.ma30);
     rsi.setData(d.rsi); mLine.setData(d.macd); mSig.setData(d.signal);
     mHist.setData(d.hist.map(function (h) { return { time: h.time, value: h.value, color: h.value >= 0 ? "#26a69a" : "#ef5350" }; }));
     sK.setData(d.stoch_k); sD.setData(d.stoch_d);
     var c = last(d.candles);
     L = { ohlc: c, vol: c.volume, e9: (last(d.ema9) || {}).value, e21: (last(d.ema21) || {}).value, e50: (last(d.ema50) || {}).value, e200: (last(d.ema200) || {}).value,
       rsi: (last(d.rsi) || {}).value, macd: (last(d.macd) || {}).value, sig: (last(d.signal) || {}).value, hist: (last(d.hist) || {}).value,
-      sk: (last(d.stoch_k) || {}).value, sd: (last(d.stoch_d) || {}).value };
+      sk: (last(d.stoch_k) || {}).value, sd: (last(d.stoch_d) || {}).value,
+      ma5: (last(d.ma5) || {}).value, ma10: (last(d.ma10) || {}).value, ma30: (last(d.ma30) || {}).value };
     $("last").textContent = f(c.close); paintLegend(L);
     fibData = d.fib; drawFib();
     smc = d.smc || null; smcMarkers(); drawSmc();
+    var r24 = smc && smc.range24;
+    $("h24").textContent = r24 ? "Plus haut 24h " + f(r24.high.price) + " · Plus bas 24h " + f(r24.low.price) : "";
   }
   function fetchAndPaint() {
     return api(URLS.candles + "?symbol=" + state.symbol + "&tf=" + state.tf).then(function (d) { paint(d); msg(""); }).catch(function (e) { msg(e.message); });
@@ -263,6 +284,34 @@
     $("potential").innerHTML = h;
   }
   $("in-cap").oninput = renderPotential; $("in-lev").oninput = renderPotential;
+  function renderConfluence(r) {
+    var h = "";
+    if (r.confluence) {
+      var c = r.confluence, cls = c.class === "fort" || c.class === "modere" ? "ok" : "warn";
+      h += '<div class="pot"><b class="confl ' + cls + '">Confluence : ' + c.score + "/100 (" + c.class + ")</b>" +
+        "<small>Technique " + c.parts.technique[0] + "/40 · Sentiment " + (c.parts.sentiment[0] === null ? "n/d" : c.parts.sentiment[0]) + "/25 · Fondamental : calcule par le bot (actualites)</small>" +
+        (c.partial ? "<small>Score partiel (normalise) : " + c.missing.join(", ") + " non inclus dans le scanner live.</small>" : "") +
+        (c.blocks.length ? '<small class="down">BLOCAGE : ' + c.blocks.join(" ; ") + "</small>" : "") + "</div>";
+    }
+    var s = r.sentiment;
+    if (s) {
+      h += '<div class="pot"><b>Sentiment du marche</b>' + (s.available ? "" : "<small>DONNEES INDISPONIBLES</small>") +
+        s.reasons.map(function (x) { return "<small>" + x + "</small>"; }).join("") +
+        (s.labels && s.labels.length ? '<div>' + s.labels.map(function (x) { return '<span class="chip">' + x + "</span>"; }).join("") + "</div>" : "") + "</div>";
+    }
+    $("confl").innerHTML = h;
+  }
+  function renderPrep(r) {
+    if (r.entry === undefined) { $("prep").innerHTML = ""; return; }
+    $("prep").innerHTML = '<button id="btn-prep" class="primary" type="button">Preparer ce trade (page EXECUTE TRADE)</button><small>Aucun ordre n\'est envoye : tu verifies entree, SL, TP puis tu confirmes sur la page suivante.</small>';
+    $("btn-prep").onclick = function () {
+      var form = document.createElement("form"); form.method = "post"; form.action = URLS.create.replace("ZZZ", r.symbol);
+      var fields = { csrfmiddlewaretoken: csrf, direction: r.direction, entry: r.entry, stop_loss: r.stop_loss, take_profit: r.take_profits[1],
+        capital_usdt: $("in-cap").value, leverage: $("in-lev").value };
+      Object.keys(fields).forEach(function (k) { var i = document.createElement("input"); i.type = "hidden"; i.name = k; i.value = fields[k]; form.appendChild(i); });
+      document.body.appendChild(form); form.submit();
+    };
+  }
   function drawIct(r) {
     var z = r.ict; if (!z) return;
     var long = z.direction === "LONG";
@@ -299,7 +348,7 @@
       var z = r.ict;
       $("ict").innerHTML = z ? '<div class="ictbox"><b>Setup ICT · grade ' + z.grade + " (" + z.score + "/" + z.max + ")</b><div>" +
         z.confluences.map(function (x) { return '<span class="chip">' + x + "</span>"; }).join("") + "</div><small>" + z.reasons.slice(0, 4).join("<br>") + "</small></div>" : "";
-      renderPotential();
+      renderPotential(); renderConfluence(r); renderPrep(r);
       $("confirms").innerHTML = (r.confirmations || []).map(function (c) {
         return '<div class="conf"><span>' + c.name + " : " + (c.value === null ? "—" : c.value) + "</span><span>" + c.verdict + "</span></div>";
       }).join("");
@@ -347,7 +396,9 @@
   $("btn-redo").onclick = function () { var d = redo.pop(); if (d) place(d); };
 
   // ---- logos des cryptos (CDN, avec repli puis pastille de lettres) ----
+  var LOGO_URL = cfg.dataset.logo;
   var LOGO_SRC = [
+    function (b) { return LOGO_URL.replace("ZZZ", b.toUpperCase()); },
     function (b) { return "https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/" + b + ".png"; },
     function (b) { return "https://assets.coincap.io/assets/icons/" + b + "@2x.png"; }
   ];
@@ -356,11 +407,12 @@
   window.kpsLogoErr = function (img) {
     var i = (+img.dataset.i || 0) + 1;
     if (i < LOGO_SRC.length) { img.dataset.i = i; img.src = LOGO_SRC[i](img.dataset.b); return; }
-    var s = document.createElement("i"); s.className = "coin"; s.style.background = hue(img.dataset.b); s.textContent = img.dataset.b.slice(0, 3).toUpperCase(); img.replaceWith(s);
+    var gold = /^xau/.test(img.dataset.b), s = document.createElement("i"); s.className = "coin" + (gold ? " gold" : "");
+    if (!gold) s.style.background = hue(img.dataset.b);
+    s.textContent = gold ? "Au" : img.dataset.b.slice(0, 3).toUpperCase(); img.replaceWith(s);
   };
   function logoHTML(sym) {
     var b = logoBase(sym);
-    if (/^xau/.test(b)) return '<i class="coin gold">Au</i>';
     return '<img class="coinimg" loading="lazy" alt="" data-b="' + b + '" data-i="0" src="' + LOGO_SRC[0](b) + '" onerror="kpsLogoErr(this)">';
   }
 
@@ -428,6 +480,7 @@
     if (k === "vol") vol.applyOptions({ visible: on });
     if (k === "fib") { fibOn = on; drawFib(); }
     if (k === "smc") { smcOn = on; smcMarkers(); drawSmc(); }
+    if (k === "ma") { maOn = on; Object.keys(ma).forEach(function (x) { ma[x].applyOptions({ visible: on }); }); paintLegend(L); }
     ["rsi", "macd", "stoch"].forEach(function (s) { if (k === s) { $(s).style.display = on ? "" : "none"; $("lbl-" + s).style.display = on ? "" : "none"; resizeAll(); } });
   }; });
 

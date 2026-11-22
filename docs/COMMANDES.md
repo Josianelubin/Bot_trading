@@ -38,3 +38,15 @@ Setup : CHoCH/MSS -> deplacement (imbalance) -> retracement en zone OTE (62-79 %
 Entree : milieu de la confluence FVG/OB dans l'OTE (sinon 70,5 %) ; Stop : sous l'origine de la jambe ; TP1 = sommet (liquidite), TP2/TP3 = extensions -27 % / -62 %
 Gain/perte potentiels : % du prix, % de la marge (x levier) et USDT, selon capital et levier saisis.
 Reussite/echec : bouton "Reussite historique (backtest)" = calcul sur l'historique reel, jamais invente.
+
+## Logos des cryptos (vrais logos)
+Chaque paire affiche le vrai logo de sa crypto : CoinGecko (image officielle), puis 2 sources de secours ; stocke en base.
+python manage.py fetch_logos      # telecharge d'un coup tous les logos des paires Gate (facultatif : sinon a la demande)
+Variable facultative : COINGECKO_API_KEY (cle "demo" gratuite : https://www.coingecko.com/en/api)
+
+## Analyse AUTOMATIQUE par le site (plus besoin de run_bot)
+Lance seulement : python manage.py runserver   (ou gunicorn sur Render)
+A la premiere visite du site, un moteur d'arriere-plan analyse toutes les paires toutes les KPS_SCAN_INTERVAL_SECONDS
+et envoie les resultats sur Telegram. Sur la page /live/ : bloc "Bot d'analyse automatique" (Demarrer / Arreter / Analyser maintenant).
+KPS_AUTORUN=false desactive ce moteur (alors : python manage.py run_bot). Un seul moteur tourne a la fois (verrou en base).
+Render gratuit : le service s'endort sans visite -> l'analyse s'arrete ; un worker (payant) ou un ping regulier la garde active.

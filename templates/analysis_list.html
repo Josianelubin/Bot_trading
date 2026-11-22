@@ -4,7 +4,7 @@
 <section class="card">
   <h1>Analyses (crypto et or)</h1>
   {% for a in items %}
-  <p><img src="https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/32/color/{{ a.symbol|cut:"_USDT"|lower }}.png" width="20" height="20" alt="" onerror="this.style.display='none'"> <a href="{% url 'market_scanner:detail' a.symbol %}">{{ a.symbol }}</a> - {{ a.price|default_if_none:"-" }}
+  <p><img src="{% url 'live:logo' a.symbol|cut:"_USDT" %}" width="20" height="20" alt="" onerror="this.style.display='none'"> <a href="{% url 'market_scanner:detail' a.symbol %}">{{ a.symbol }}</a> - {{ a.price|default_if_none:"-" }}
      {% if a.change_pct is not None %}({{ a.change_pct|floatformat:2 }}%){% endif %}
      - {{ a.direction }} {{ a.score }}/40 <small>({{ a.updated_at|date:"d/m H:i" }} UTC)</small></p>
   {% empty %}<p>Aucune analyse pour le moment : lance <code>python manage.py run_bot</code>.</p>{% endfor %}

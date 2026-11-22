@@ -56,13 +56,13 @@ class ChartTests(TestCase):
 
 class PipelineTests(TestCase):
     def test_proposal_built_from_real_shape_data(self):
-        r = build_proposal("BTC_USDT", breakout(), breakout(), breakout(), {"min_score": 1, "require_news": False})
+        r = build_proposal("BTC_USDT", breakout(), breakout(), breakout(), {"min_score": 1, "require_news": False, "min_confluence": 0})
         self.assertEqual(r["status"], "proposal")
         p = r["proposal"]
         self.assertEqual(p["direction"], "LONG")
         self.assertLess(p["stop_loss"], p["entry"])
         self.assertGreater(p["take_profit"], p["entry"])
-        self.assertIsNone(p["score_global"])
+        self.assertIsNotNone(p["score_global"])  # confluence partielle (ni actualites ni sentiment fournis)
         self.assertTrue(p["tools"])
 
     def test_flat_gives_none(self):
@@ -70,10 +70,10 @@ class PipelineTests(TestCase):
 
     def test_blocked_by_discipline(self):
         r = build_proposal("BTC_USDT", breakout(), breakout(), breakout(),
-                           {"min_score": 1, "require_news": False, "capital_usdt": 100000, "limits": {"max_risk_pct": 0.01}})
+                           {"min_score": 1, "require_news": False, "min_confluence": 0, "capital_usdt": 100000, "limits": {"max_risk_pct": 0.01}})
         self.assertEqual(r["status"], "blocked")
         self.assertTrue(r["violations"])
 
     def test_last_candle_ignored(self):
         c = breakout()
-        self.assertEqual(build_proposal("X", c, c, c, {"min_score": 1, "require_news": False})["proposal"]["entry"], c[-2]["c"])
+        self.assertEqual(build_proposal("X", c, c, c, {"min_score": 1, "require_news": False, "min_confluence": 0})["proposal"]["entry"], c[-2]["c"])

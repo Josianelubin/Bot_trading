@@ -43,3 +43,13 @@ class GateClient:
             f"/futures/{SETTLE}/candlesticks",
             {"contract": contract, "interval": interval, "limit": limit},
         )
+
+    def contract_stats(self, contract, interval="1h", limit=24):
+        """Statistiques futures : open interest, ratio long/short, liquidations (endpoint public)."""
+        return self._get(f"/futures/{SETTLE}/contract_stats", {"contract": contract, "interval": interval, "limit": limit})
+
+    def ticker(self, contract):
+        r = self._get(f"/futures/{SETTLE}/tickers", {"contract": contract})
+        if not r:
+            raise GateAPIError("Ticker indisponible")
+        return r[0]

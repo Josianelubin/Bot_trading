@@ -2,14 +2,71 @@
 etiquettes de structure HH/HL/LH/LL, CHoCH / BOS / MSS, liquidite (Buy-Side / Sell-Side, Equal Highs / Lows),
 balayages de liquidite (sweeps), bougies de deplacement, FVG et Order Blocks encore valides.
 Les bougies doivent contenir le temps 't'."""
+import bisect
+
 from apps.smart_money import ict
 from apps.technical_analysis import indicators as ind
 from apps.technical_analysis.strategies import swings
 
-EMPTY = {"labels": [], "events": [], "liquidity": [], "sweeps": [], "displacement": [], "fvg": [], "ob": []}
+EMPTY = {"labels": [], "events": [], "liquidity": [], "sweeps": [], "displacement": [], "fvg": [], "ob": [],
+         "range24": None, "prev_day": None}
 
 
-def build(c, w=3, max_levels=3, tol=0.001):
+def compute_levels(h1):
+    """Extremes des 24 dernieres heures et du jour UTC precedent, calcules sur des bougies 1H REELLES.
+    Valable pour n'importe quel timeframe affiche (1m comme 1W) et n'importe quelle paire."""
+    if not h1 or "t" not in h1[0] or len(h1) < 24:
+        return None
+    now = h1[-1]["t"] + 3600
+    win = [x for x in h1 if x["t"] >= now - 86400]
+    if len(win) < 20:
+        return None
+    hi, lo = max(win, key=lambda x: x["h"]), min(win, key=lambda x: x["l"])
+    out = {"r24": {"high": {"price": hi["h"], "time": hi["t"]}, "low": {"price": lo["l"], "time": lo["t"]}}, "pd": None}
+    day = h1[-1]["t"] // 86400 - 1
+    prev = [x for x in h1 if x["t"] // 86400 == day]
+    if len(prev) >= 22:
+        phi, plo = max(prev, key=lambda x: x["h"]), min(prev, key=lambda x: x["l"])
+        out["pd"] = {"high": {"price": phi["h"], "time": phi["t"]}, "low": {"price": plo["l"], "time": plo["t"]}}
+    return out
+
+
+def _snap(t, times):
+    """Ouverture de la bougie DU GRAPHIQUE qui contient t (avant la 1re bougie : la 1re)."""
+    return times[max(bisect.bisect_right(times, t) - 1, 0)]
+
+
+def extremes(c, tf_sec, atr_val, levels=None):
+    """Plus haut / plus bas des 24 dernieres heures et du JOUR UTC PRECEDENT (PDH / PDL) : la liquidite
+    des extremes, comme les etiquettes de prix haut/bas du graphique Gate."""
+    if levels and "t" in c[0]:
+        times = [x["t"] for x in c]
+
+        def conv(d):
+            return {"high": {"price": d["high"]["price"], "time": _snap(d["high"]["time"], times)},
+                    "low": {"price": d["low"]["price"], "time": _snap(d["low"]["time"], times)}}
+        r24 = {**conv(levels["r24"]), "atr": atr_val}
+        return r24, (conv(levels["pd"]) if levels.get("pd") else None)
+    if not tf_sec or tf_sec >= 86400 or "t" not in c[0]:
+        return None, None
+    last_t = c[-1]["t"]
+    win = [x for x in c if x["t"] >= last_t - 86400 + tf_sec]
+    r24 = None
+    if len(win) >= 0.9 * (86400 / tf_sec):
+        hi = max(win, key=lambda x: x["h"])
+        lo = min(win, key=lambda x: x["l"])
+        r24 = {"high": {"price": hi["h"], "time": hi["t"]}, "low": {"price": lo["l"], "time": lo["t"]}, "atr": atr_val}
+    day = last_t // 86400 - 1
+    prev = [x for x in c if x["t"] // 86400 == day]
+    pd = None
+    if len(prev) >= 0.9 * (86400 / tf_sec):
+        hi = max(prev, key=lambda x: x["h"])
+        lo = min(prev, key=lambda x: x["l"])
+        pd = {"high": {"price": hi["h"], "time": hi["t"]}, "low": {"price": lo["l"], "time": lo["t"]}}
+    return r24, pd
+
+
+def build(c, w=3, max_levels=3, tol=0.001, tf_sec=None, levels=None):
     n = len(c)
     if n < 30 or "t" not in c[0]:
         return dict(EMPTY)
@@ -75,5 +132,6 @@ def build(c, w=3, max_levels=3, tol=0.001):
            for g in ict.fvgs(c, atr_val) if g["status"] in ("ouvert", "partiel")] if atr_val else []
     ob = [{"time": c[o["index"]]["t"], "lo": o["lo"], "hi": o["hi"], "type": o["type"]}
           for o in ict.order_blocks(c, atr_val) if o["valid"]] if atr_val else []
+    r24, prev_day = extremes(c, tf_sec, atr_val, levels)
     return {"labels": labels[-14:], "events": events[-6:], "liquidity": above + below, "sweeps": sweeps[-4:],
-            "displacement": disp[-8:], "fvg": fvg[-6:], "ob": ob[-4:]}
+            "displacement": disp[-8:], "fvg": fvg[-6:], "ob": ob[-4:], "range24": r24, "prev_day": prev_day}

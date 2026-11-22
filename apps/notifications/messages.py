@@ -38,9 +38,9 @@ def format_proposal(p):
         lines += [f"Gain potentiel : {gain:+.2f}% de la marge",
                   f"Perte potentielle : {loss:+.2f}% de la marge"]
     lines += ["(frais et funding non inclus)", ""]
-    if p.get("score_fundamental") is not None:
-        lines.append(f"Score partiel technique + fondamental : {p['score_technical'] + p['score_fundamental']}/75 "
-                     "(sentiment pas encore actif)")
+    if p.get("score_global") is not None:
+        c = p.get("confluence") or {}
+        lines.append(f"CONFLUENCE : {p['score_global']}/100 ({c.get('class', '')})" + (" - partielle : " + ", ".join(c["missing"]) + " indisponible" if c.get("partial") else ""))
     prob = p.get("win_probability_pct")
     n = p.get("backtest_trades")
     if prob is None or not n:
@@ -96,7 +96,7 @@ def format_market_summary(rows, mode):
     return "\n".join(lines)
 
 
-def format_analysis(symbol, a, f):
+def format_analysis(symbol, a, f, sent=None, conf=None):
     """Outils utilises, direction, score et explication de chacun, puis fondamental."""
     lines = [f"ANALYSE {symbol} - {a['direction']} - technique {a['score']}/40", ""]
     for s in a["strategies"]:
@@ -108,6 +108,18 @@ def format_analysis(symbol, a, f):
     lines += ["", "Fondamental : " + ("; ".join(f["reasons"]) if f else "indisponible")]
     for i in (f["items"][:3] if f else []):
         lines.append(f"  [{i['sentiment']}] {i['title'][:100]} ({i['source']})")
+    if sent:
+        lines += ["", "Sentiment : " + ("; ".join(sent["reasons"]) if sent.get("reasons") else "indisponible")]
+        if sent.get("labels"):
+            lines.append("  -> " + ", ".join(sent["labels"]))
+    if conf:
+        parts = conf["parts"]
+        lines += ["", f"CONFLUENCE : {conf['score']}/100 ({conf['class']}) - technique {parts['technique'][0]}/40, fondamental "
+                      f"{parts['fondamental'][0] if parts['fondamental'][0] is not None else 'n/d'}/35, sentiment "
+                      f"{parts['sentiment'][0] if parts['sentiment'][0] is not None else 'n/d'}/25"]
+        if conf.get("blocks"):
+            lines.append("BLOCAGE : " + " ; ".join(conf["blocks"]))
+        lines += conf.get("reasons", [])
     return "\n".join(lines)
 
 

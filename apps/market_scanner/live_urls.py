@@ -13,6 +13,9 @@ urlpatterns = [
     path("api/emergency/", v.emergency_api, name="emergency"),
     path("api/backtest/", v.backtest_api, name="backtest"),
     path("api/contracts/", v.contracts_api, name="contracts"),
+    path("api/bot/", v.bot_api, name="bot"),
+    path("api/bot/control/", v.bot_control_api, name="bot_control"),
+    path("logo/<str:base>.png", v.logo_api, name="logo"),
     path("api/performance/", v.performance_api, name="performance"),
     path("api/close/<int:pk>/", v.close_api, name="close"),
 ]

@@ -63,6 +63,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "apps.trading.middleware.AutorunMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -202,3 +203,14 @@ KPS_NEWSAPI_REFRESH_MINUTES = _num("KPS_NEWSAPI_REFRESH_MINUTES", 360, int)
 NEWSDATA_API_KEY = os.environ.get("NEWSDATA_API_KEY", "")
 KPS_NEWSDATA_DAILY_LIMIT = _num("KPS_NEWSDATA_DAILY_LIMIT", 150, int)
 KPS_NEWSDATA_REFRESH_MINUTES = _num("KPS_NEWSDATA_REFRESH_MINUTES", 240, int)
+
+# --- Logos des cryptos (CoinGecko : cle "demo" gratuite facultative) ---
+COINGECKO_API_KEY = os.environ.get("COINGECKO_API_KEY", "")
+
+# --- Confluence et sentiment ---
+KPS_MIN_CONFLUENCE = _num("KPS_MIN_CONFLUENCE", 65, int)      # 65-79 modere, 80+ fort ; 50-64 = surveillance (pas de trade)
+KPS_REQUIRE_SENTIMENT = env_bool("KPS_REQUIRE_SENTIMENT", False)
+
+# --- Analyse automatique lancee par le site (plus besoin de `run_bot`) ---
+import sys as _sys
+KPS_AUTORUN = env_bool("KPS_AUTORUN", True) and "test" not in _sys.argv

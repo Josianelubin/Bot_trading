@@ -121,3 +121,6 @@ body.nomaxscroll{overflow:hidden}
 
 #zones{position:absolute;left:0;top:0;pointer-events:none;z-index:4}
 .smclegend{display:block;color:#94a3b8;font-size:.75rem;margin-top:.2rem}
+.h24{color:#cbd5e1;margin-left:.4rem}
+.botbox{background:#0b1a3d;border:1px solid #1d4ed8;border-radius:.6rem;padding:.5rem;margin:.6rem 0}.botbtns{display:grid;grid-template-columns:1fr 1fr;gap:.4rem;margin:.4rem 0}
+.botbox small{display:block;color:#cbd5e1}.ok{color:#22c55e}.warn{color:#f59e0b}.confl{font-size:1.05rem}

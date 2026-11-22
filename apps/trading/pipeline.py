@@ -1,11 +1,13 @@
-"""Construit une proposition de trade a partir des bougies reelles (4H, 1H, 15M).
-Analyse TECHNIQUE seule pour l'instant : fondamental et sentiment ne sont pas encore actifs.
+"""Construit une proposition de trade a partir des bougies reelles (4H, 1H, 15M) :
+technique (40) + fondamental (35) + sentiment (25) = score de confluence sur 100.
 La derniere bougie (en cours) est ignoree : on n'analyse que des bougies cloturees."""
 from datetime import datetime, timezone
 
+from apps.decision_engine.confluence import confluence
 from apps.fundamental_analysis import engine as fundamental
 from apps.risk_management.discipline import check_plan
 from apps.smart_money import ict as ict_lib
+from apps.sentiment_analysis import engine as sentiment_engine
 from apps.smart_money.setup import find_setup
 from apps.technical_analysis import engine
 
@@ -20,6 +22,8 @@ DEFAULT_CFG = {
     "mode": "DEMO",
     "limits": {},
     "require_news": True,
+    "require_sentiment": False,
+    "min_confluence": 65,       # 65-79 signal modere, 80+ fort (50-64 = surveillance, pas de trade)
 }
 
 
@@ -27,18 +31,24 @@ def _r(x):
     return float(f"{x:.6g}")
 
 
-def build_proposal(symbol, c4h, c1h, c15, cfg=None, news=None):
+def build_proposal(symbol, c4h, c1h, c15, cfg=None, news=None, sentiment=None):
     cfg = {**DEFAULT_CFG, **(cfg or {})}
     a = engine.analyze_mtf(c4h[:-1], c1h[:-1], c15[:-1])
     d = a["direction"]
     f = fundamental.assess(news, None if d == "NEUTRE" else d, datetime.now(timezone.utc), cfg["require_news"])
-    base = {"analysis": a, "fundamental": f}
+    sent = sentiment_engine.assess(sentiment, None if d == "NEUTRE" else d)
+    if cfg["require_sentiment"] and not sent["available"]:
+        sent["block"] = "DONNEES INDISPONIBLES : sentiment (blocage applique)"
+    conf = confluence(d, a["score"], f, sent) if d != "NEUTRE" else None
+    base = {"analysis": a, "fundamental": f, "sentiment": sent, "confluence": conf}
     if d == "NEUTRE":
         return {"status": "none", "reason": "NEUTRE", **base}
     if a["score"] < cfg["min_score"]:
-        return {"status": "none", "reason": f"score {a['score']} < {cfg['min_score']}", **base}
-    if f["block"]:
-        return {"status": "blocked", "violations": [f["block"]], **base}
+        return {"status": "none", "reason": f"score technique {a['score']} < {cfg['min_score']}", **base}
+    if conf["blocked"]:
+        return {"status": "blocked", "violations": conf["blocks"], **base}
+    if conf["score"] < cfg["min_confluence"]:
+        return {"status": "none", "reason": f"confluence {conf['score']}/100 ({conf['class']}) < {cfg['min_confluence']}", **base}
     entry = c15[-2]["c"]
     sl = a["suggested"]["stop_loss"]
     dist = abs(entry - sl)
@@ -60,17 +70,19 @@ def build_proposal(symbol, c4h, c1h, c15, cfg=None, news=None):
              "minutes_since_last_loss": None}
     chk = check_plan(plan, state, cfg["limits"])
     used = [r for r in a["strategies"] if r["direction"] == d]
-    fs = f["score"]
-    partial = (f"Score partiel : technique {a['score']}/40 + fondamental {fs}/35 = {a['score'] + fs}/75 "
-               "(sentiment pas encore actif)") if fs is not None else None
+    fs, ss = f["score"], sent["score"]
+    gl = (f"Confluence {conf['score']}/100 ({conf['class']}) : technique {a['score']}/40, fondamental "
+          f"{fs if fs is not None else 'n/d'}/35, sentiment {ss if ss is not None else 'n/d'}/25"
+          + (" - partielle (" + ", ".join(conf["missing"]) + " indisponible)" if conf["partial"] else ""))
     proposal = {
         **plan, "symbol": symbol, "mode": cfg["mode"], "score_technical": a["score"],
-        "score_fundamental": fs, "score_sentiment": None, "score_global": None,
+        "score_fundamental": fs, "score_sentiment": ss, "score_global": conf["score"], "confluence": conf,
+        "sentiment": {"labels": sent["labels"], "reasons": sent["reasons"]},
         "tools": [r["name"] for r in used],
-        "reasons": ([x for r in used for x in r["reasons"]] + setup_reasons + f["reasons"] + ([partial] if partial else []))[:18],
+        "reasons": ([x for r in used for x in r["reasons"]] + setup_reasons + f["reasons"] + sent["reasons"] + sent["labels"] + [gl])[:22],
         "news": [{"title": i["title"], "source": i["source"], "url": i["url"], "sentiment": i["sentiment"]}
                  for i in f["items"][:5]],
-        "risks": ["Sentiment du marche pas encore actif (analyse technique + actualites seulement)",
+        "risks": ([f"Sentiment : {', '.join(sent['labels'])}"] if sent["labels"] else []) + ([f"Composantes indisponibles : {', '.join(conf['missing'])} (score normalise)"] if conf["partial"] else []) + [
                   f"Liquidation approx. vers {_r(liq)} (marge isolee x{lev}, hors frais)",
                   "Le stop (2 x ATR) et le gain (ratio %.1f) sont des suggestions modifiables" % cfg["reward_risk"]],
         "mtf": a.get("mtf"), "ttl_minutes": cfg["ttl_minutes"],

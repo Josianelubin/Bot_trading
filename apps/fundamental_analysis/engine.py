@@ -18,8 +18,8 @@ def assess(news, direction, now=None, require=True):
                 "DONNEES INDISPONIBLES : actualites introuvables (blocage applique)" if require else None,
                 "reasons": ["DONNEES INDISPONIBLES : actualites introuvables"]}
     if not news:
-        return {"available": True, "score": 0, "bias": 0.0, "items": [], "block": None,
-                "reasons": ["Fondamental : aucune actualite recente (48 h) pour cet actif"]}
+        return {"available": True, "score": int(MAX_SCORE / 2 + 0.5) if direction else None, "bias": 0.0, "items": [], "block": None,
+                "reasons": ["Fondamental : aucune actualite recente (48 h) pour cet actif (neutre)"]}
     num = den = 0.0
     for it in news:
         a = _age_h(it, now)
@@ -28,7 +28,7 @@ def assess(news, direction, now=None, require=True):
         num, den = num + sign * w, den + w
     bias = num / den if den else 0.0
     signed = bias if direction == "LONG" else -bias if direction == "SHORT" else 0.0
-    score = round(MAX_SCORE * max(0.0, signed) * min(1.0, len(news) / 3)) if direction else None
+    score = int(MAX_SCORE * (0.5 + 0.5 * signed * min(1.0, len(news) / 3)) + 0.5) if direction else None
     pos = sum(1 for i in news if i["sentiment"] == "positif")
     neg = sum(1 for i in news if i["sentiment"] == "negatif")
     reasons = [f"Fondamental : {len(news)} actualite(s) ({pos} positive(s), {neg} negative(s)), biais {bias:+.2f}"]

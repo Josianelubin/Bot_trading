@@ -58,9 +58,9 @@ class FundamentalTests(TestCase):
         self.assertIn("DONNEES INDISPONIBLES", r["block"])
         self.assertIsNone(engine.assess(None, "LONG", NOW, require=False)["block"])
 
-    def test_no_news_is_available_score_zero(self):
+    def test_no_news_is_available_and_neutral(self):
         r = engine.assess([], "LONG", NOW)
-        self.assertEqual((r["available"], r["score"]), (True, 0))
+        self.assertEqual((r["available"], r["score"]), (True, 18))  # neutre = la moitie des 35 points
 
     def test_positive_news_scores_long(self):
         items = news.prepare([item("Spot ETF approved", 1), item("Institutional inflow surge", 2),
@@ -87,23 +87,24 @@ class PipelineNewsTests(TestCase):
         return news.prepare(raw, now)
 
     def test_news_unavailable_blocks_proposal(self):
-        r = build_proposal("BTC_USDT", breakout(), breakout(), breakout(), {"min_score": 1}, news=None)
+        r = build_proposal("BTC_USDT", breakout(), breakout(), breakout(), {"min_score": 1, "min_confluence": 0}, news=None)
         self.assertEqual(r["status"], "blocked")
         self.assertIn("DONNEES INDISPONIBLES", r["violations"][0])
 
     def test_adverse_news_blocks(self):
-        r = build_proposal("BTC_USDT", breakout(), breakout(), breakout(), {"min_score": 1},
+        r = build_proposal("BTC_USDT", breakout(), breakout(), breakout(), {"min_score": 1, "min_confluence": 0},
                            news=self._news("Exchange hack, funds stolen"))
         self.assertEqual(r["status"], "blocked")
 
     def test_with_news_proposal_has_fundamental_score(self):
-        r = build_proposal("BTC_USDT", breakout(), breakout(), breakout(), {"min_score": 1},
+        r = build_proposal("BTC_USDT", breakout(), breakout(), breakout(), {"min_score": 1, "min_confluence": 0},
                            news=self._news("Spot ETF approved", "Institutional inflow surge", "Partnership launch"))
         self.assertEqual(r["status"], "proposal")
         p = r["proposal"]
         self.assertIsNotNone(p["score_fundamental"])
         self.assertTrue(p["news"])
-        self.assertIsNone(p["score_global"])
+        self.assertTrue(0 <= p["score_global"] <= 100)
+        self.assertTrue(p["confluence"]["partial"])  # sentiment non fourni
 
 
 class MessageTests(TestCase):
@@ -111,7 +112,7 @@ class MessageTests(TestCase):
         s = messages.format_market_summary([{"symbol": "XAUT_USDT", "price": 2650.5, "change_pct": 0.4,
                                               "direction": "NEUTRE", "score": 0}], "DEMO")
         self.assertIn("XAUT_USDT", s)
-        r = build_proposal("BTC_USDT", breakout(), breakout(), breakout(), {"min_score": 1, "require_news": False})
+        r = build_proposal("BTC_USDT", breakout(), breakout(), breakout(), {"min_score": 1, "require_news": False, "min_confluence": 0})
         a = messages.format_analysis("BTC_USDT", r["analysis"], r["fundamental"])
         self.assertIn("turtle", a)
         d = messages.format_news_digest([{"symbol": "BTC", "title": "T", "source": "s", "url": "u",
@@ -194,3 +195,36 @@ class NewsDataTests(TestCase):
         s = self._s(payload={})
         self.assertEqual(news.fetch_newsdata("BTC_USDT", "", session=s), [])
         s.get.assert_not_called()
+
+
+class ConfluenceGateTests(TestCase):
+    SENT = {"fear_greed": {"value": 15, "label": "Extreme Fear"}, "funding_rate": -0.0008,
+            "stats": [{"open_interest_usd": 1e6 + i * 5000, "mark_price": 100 + i * 0.2, "lsr_account": 0.5,
+                       "long_liq_usd": 0, "short_liq_usd": 0} for i in range(24)]}
+
+    def _news(self, *titles):
+        now = datetime.now(timezone.utc)
+        raw = [{"title": t, "url": f"https://reuters.com/{i}", "source": "reuters.com",
+                "published_at": now - timedelta(hours=1 + i)} for i, t in enumerate(titles)]
+        return news.prepare(raw, now)
+
+    def test_default_threshold_blocks_weak_confluence(self):
+        r = build_proposal("BTC_USDT", breakout(), breakout(), breakout(), {"min_score": 1, "require_news": False})
+        self.assertEqual(r["status"], "none")
+        self.assertIn("confluence", r["reason"])
+
+    def test_aligned_news_and_sentiment_give_strong_proposal(self):
+        r = build_proposal("BTC_USDT", breakout(), breakout(), breakout(), {"min_score": 1},
+                           news=self._news("Spot ETF approved", "Institutional inflow surge", "Partnership launch"),
+                           sentiment=self.SENT)
+        self.assertEqual(r["status"], "proposal")
+        c = r["proposal"]["confluence"]
+        self.assertFalse(c["partial"])
+        self.assertGreaterEqual(c["score"], 65)
+        self.assertIn("CONFLUENCE", messages.format_proposal({**r["proposal"], "id": 1, "expires_at": "-"}))
+
+    def test_sentiment_required_but_missing_blocks(self):
+        r = build_proposal("BTC_USDT", breakout(), breakout(), breakout(),
+                           {"min_score": 1, "require_news": False, "require_sentiment": True, "min_confluence": 0})
+        self.assertEqual(r["status"], "blocked")
+        self.assertIn("sentiment", r["violations"][0])

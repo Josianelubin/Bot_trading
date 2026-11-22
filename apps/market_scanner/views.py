@@ -1,3 +1,4 @@
+import re
 from datetime import timedelta
 
 from django.conf import settings
@@ -37,7 +38,10 @@ def chart_png(request, symbol):
 @require_POST
 def create_trade(request, symbol):
     """Prepare un trade manuel : TU definis direction, entree, SL et TP ; rien n'est envoye a Gate ici."""
-    obj = get_object_or_404(SymbolAnalysis, symbol=symbol)
+    obj = SymbolAnalysis.objects.filter(symbol=symbol).first()
+    if not re.fullmatch(r"[A-Z0-9]{2,20}_USDT", symbol):
+        flash.error(request, "Paire invalide.")
+        return redirect("live:page")
     try:
         d = request.POST["direction"]
         vals = {k: float(request.POST[k]) for k in ("entry", "stop_loss", "take_profit", "capital_usdt")}
@@ -46,10 +50,10 @@ def create_trade(request, symbol):
             raise ValueError
     except (KeyError, ValueError):
         flash.error(request, "Valeurs invalides pour le trade.")
-        return redirect("market_scanner:detail", symbol=symbol)
-    p = obj.payload
+        return redirect("live:page")
+    p = obj.payload if obj else {}
     t = TradeProposal.objects.create(
-        symbol=symbol, direction=d, mode=settings.TRADING_MODE, leverage=lev, score_technical=obj.score,
+        symbol=symbol, direction=d, mode=settings.TRADING_MODE, leverage=lev, score_technical=obj.score if obj else 0,
         expires_at=timezone.now() + timedelta(minutes=settings.KPS_PROPOSAL_TTL_MINUTES * 2),
         payload={"source": "manuel", "tools": p.get("tools", []), "reasons": p.get("reasons", [])[:14],
                  "risks": ["Trade prepare manuellement depuis la page d'analyse"]}, **vals)

@@ -4,17 +4,22 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
-from django.http import JsonResponse
+from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from apps.audit.models import SystemFlag, emergency_active
+from apps.market_data import logo_store
 from apps.market_data.gate_client import GateAPIError, GateClient
 from apps.notifications import telegram
+from apps.decision_engine.confluence import confluence
+from apps.sentiment_analysis import engine as sentiment_engine
+from apps.sentiment_analysis.sources import SentimentError, fetch_fear_greed
 from apps.smart_money import overlays
 from apps.technical_analysis import bollinger, indicators as ind
 from apps.trade_approval.models import TradeProposal
+from apps.trading import autorun
 from apps.trading.factory import trader_from_settings
 from apps.trading.gate_private import GateTradeError
 
@@ -27,7 +32,8 @@ from .scan import scan as run_scan
 TF_MAP = {"1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m", "1h": "1h", "4h": "4h", "8h": "8h", "1d": "1d", "1w": "7d"}
 SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,20}_USDT$")
 HTF_MAP = {"1m": "15m", "5m": "1h", "15m": "4h", "30m": "4h", "1h": "4h", "4h": "1d", "8h": "1d", "1d": "1w", "1w": None}
-_bt_cache, _contracts_cache = {}, {"t": 0, "data": []}
+_bt_cache, _contracts_cache, _lv_cache = {}, {"t": 0, "data": []}, {}
+_fng_cache = {"t": 0.0, "v": None}
 
 
 def _pairs():
@@ -70,6 +76,19 @@ def live(request):
         "mode": settings.TRADING_MODE, "emergency": emergency_active(), "ws_url": "wss://fx-ws.gateio.ws/v4/ws/usdt"})
 
 
+def _levels(sym):
+    """Extremes 24 h et jour precedent (bougies 1H reelles), en cache 5 min : meme niveaux pour tous les timeframes."""
+    hit = _lv_cache.get(sym)
+    if hit and time.time() - hit[0] < 300:
+        return hit[1]
+    try:
+        lv = overlays.compute_levels(ind.normalize_candles(GateClient().candlesticks(sym, "1h", 120)))
+    except (GateAPIError, ValueError, KeyError):
+        lv = None
+    _lv_cache[sym] = (time.time(), lv)
+    return lv
+
+
 @login_required
 def candles_api(request):
     sym, tf = _params(request)
@@ -93,6 +112,7 @@ def candles_api(request):
         "rsi": _series(t, ind.rsi(closes)), "macd": _series(t, m["macd"]), "signal": _series(t, m["signal"]),
         "hist": _series(t, m["hist"]),
         "vwap": _series(t, ind.vwap(c)),
+        "ma5": _series(t, ind.sma(closes, 5)), "ma10": _series(t, ind.sma(closes, 10)), "ma30": _series(t, ind.sma(closes, 30)),
     }
     st = ind.stoch_rsi(closes)
     out["stoch_k"], out["stoch_d"] = _series(t, st["k"]), _series(t, st["d"])
@@ -102,10 +122,31 @@ def candles_api(request):
         {"ratio": r, "price": (fb["high"] - r * (fb["high"] - fb["low"])) if fb["trend"] == "up"
          else (fb["low"] + r * (fb["high"] - fb["low"]))} for r in ratios]}
     try:
-        out["smc"] = overlays.build(c)
+        out["smc"] = overlays.build(c, tf_sec=TF_SEC[tf], levels=_levels(sym))
     except Exception:  # ne jamais casser le graphique pour une decoration
         out["smc"] = None
     return JsonResponse(out)
+
+
+def _sentiment_data(sym):
+    """Donnees REELLES de sentiment : Fear & Greed (cache 1 h), funding et statistiques futures Gate."""
+    if time.time() - _fng_cache["t"] > 3600:
+        try:
+            _fng_cache.update(t=time.time(), v=fetch_fear_greed())
+        except SentimentError:
+            _fng_cache["t"] = time.time() - 3000
+    data = {"fear_greed": _fng_cache["v"], "funding_rate": None, "stats": None}
+    client = GateClient()
+    try:
+        fr = client.ticker(sym).get("funding_rate")
+        data["funding_rate"] = float(fr) if fr not in (None, "") else None
+    except (GateAPIError, ValueError):
+        pass
+    try:
+        data["stats"] = client.contract_stats(sym, "1h", 24)
+    except GateAPIError:
+        pass
+    return data
 
 
 @login_required
@@ -131,6 +172,11 @@ def scan_api(request):
     res = run_scan(c[:-1], sym, tf, {"min_score": settings.KPS_MIN_TECH_SCORE, "leverage": lev, "capital_usdt": cap},
                    htf_closed=htf)  # bougies CLOTUREES seulement
     res["htf"] = HTF_MAP.get(tf)
+    d = res.get("direction") if res.get("direction") in ("LONG", "SHORT") else None
+    sent = sentiment_engine.assess(_sentiment_data(sym), d)
+    res["sentiment"] = sent
+    if d:
+        res["confluence"] = confluence(d, res.get("score", 0), None, sent)  # fondamental : calcule par le bot (actualites)
     for k in ("entry", "stop_loss"):
         if k in res:
             res[k] = float(f"{res[k]:.8g}")
@@ -258,4 +304,44 @@ def contracts_api(request):
             _contracts_cache.update(t=time.time(), data=out)
         except GateAPIError as e:
             return _err(f"DONNEES INDISPONIBLES : {e}")
+    logo_store.warm([p["symbol"] for p in _contracts_cache["data"][:80]] + list(settings.KPS_EXTRA_SYMBOLS))
     return JsonResponse({"pairs": _contracts_cache["data"], "extras": list(settings.KPS_EXTRA_SYMBOLS)})
+
+
+@login_required
+def logo_api(request, base):
+    """Vrai logo de la crypto (stocke en base, telecharge a la demande depuis CoinGecko puis sources de secours)."""
+    got = logo_store.get_logo(base)
+    if not got:
+        raise Http404("logo introuvable")
+    resp = HttpResponse(got[0], content_type=got[1])
+    resp["Cache-Control"] = "private, max-age=604800"
+    return resp
+
+
+@login_required
+def bot_api(request):
+    return JsonResponse(autorun.status_dict())
+
+
+@login_required
+@require_POST
+def bot_control_api(request):
+    """Actions du site sur le moteur d'analyse : demarrer / arreter l'analyse automatique, ou analyser maintenant."""
+    action = request.POST.get("action")
+    st = autorun.get_status()
+    if action == "toggle":
+        st.enabled = not st.enabled
+        st.save(update_fields=["enabled"])
+        telegram.send_message("Analyse automatique " + ("ACTIVEE." if st.enabled else "ARRETEE."))
+    elif action == "run_now":
+        if not settings.KPS_AUTORUN:
+            return _err("Analyse automatique desactivee (KPS_AUTORUN=false) : lance `python manage.py run_bot`.", 400)
+        if not st.enabled:
+            return _err("L'analyse automatique est arretee : demarre-la d'abord.", 400)
+        st.run_requested = True
+        st.save(update_fields=["run_requested"])
+    else:
+        return _err("Action inconnue", 400)
+    autorun.ensure_started()
+    return JsonResponse(autorun.status_dict())
