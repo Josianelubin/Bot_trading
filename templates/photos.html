@@ -1,0 +1,33 @@
+{% load static %}<!doctype html>
+<html lang="fr"><head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Photos d'analyse {{ symbol }} - KPS</title>
+  <link rel="icon" type="image/png" href="{% static 'images/nono-64.png' %}">
+  <link rel="stylesheet" href="{% static 'css/live.css' %}?v=8">
+  <style>.gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:.8rem;padding:.8rem}.gal figure{margin:0}.gal img{width:100%;height:auto;border-radius:.6rem;border:1px solid #1d4ed8;background:#0a1530;min-height:120px}
+  .gal figcaption{display:flex;gap:.4rem;align-items:center;justify-content:space-between;padding:.3rem 0}@media(max-width:640px){.gal{grid-template-columns:1fr}}</style>
+</head><body>
+{% csrf_token %}
+<header class="top"><b class="brand">Photos d'analyse</b> <span class="badge">{{ symbol|cut:"_USDT" }}/USDT</span>
+  <small>Chaque photo est calculee en direct sur les vraies bougies du timeframe (mise a jour toutes les 60 s).</small>
+  <nav><a href="{% url 'live:page' %}?symbol={{ symbol }}">← Retour au graphique</a> <button id="refresh">Actualiser</button></nav></header>
+<div class="gal">
+  {% for tf in tfs %}<figure><figcaption><b>{{ tf|upper }}</b>
+    <span><a href="{% url 'live:analysis_image' %}?symbol={{ symbol }}&tf={{ tf }}&lev={{ lev }}&cap={{ cap }}" target="_blank" rel="noopener">Ouvrir</a>
+    <button class="send" data-tf="{{ tf }}">Envoyer sur Telegram</button></span></figcaption>
+    <img loading="lazy" alt="Analyse {{ symbol }} {{ tf }}" data-tf="{{ tf }}" src="{% url 'live:analysis_image' %}?symbol={{ symbol }}&tf={{ tf }}&lev={{ lev }}&cap={{ cap }}"></figure>{% endfor %}
+</div>
+<script>
+(function () {
+  var csrf = document.querySelector("input[name=csrfmiddlewaretoken]").value, base = "{% url 'live:analysis_image' %}", sym = "{{ symbol }}", q = "&lev={{ lev }}&cap={{ cap }}";
+  function refresh() { document.querySelectorAll(".gal img").forEach(function (im) { im.src = base + "?symbol=" + sym + "&tf=" + im.dataset.tf + q + "&t=" + Date.now(); }); }
+  document.getElementById("refresh").onclick = refresh;
+  setInterval(function () { if (document.visibilityState === "visible") refresh(); }, 60000);
+  document.querySelectorAll(".send").forEach(function (b) { b.onclick = function () {
+    var body = new URLSearchParams(); b.disabled = true;
+    fetch(base + "send/?symbol=" + sym + "&tf=" + b.dataset.tf + q, { method: "POST", headers: { "X-CSRFToken": csrf } })
+      .then(function (r) { return r.json().then(function (j) { alert(r.ok ? "Photo envoyee sur Telegram" : (j.error || "Erreur")); }); })
+      .finally(function () { b.disabled = false; });
+  }; });
+})();
+</script></body></html>

@@ -1,0 +1,2 @@
+DejaVu Fonts : polices libres (licence Bitstream Vera / domaine public pour les modifications DejaVu), redistribution autorisee.
+https://dejavu-fonts.github.io/License.html

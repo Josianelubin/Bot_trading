@@ -19,6 +19,7 @@ from apps.sentiment_analysis.sources import SentimentError, fetch_fear_greed
 from apps.smart_money import overlays
 from apps.technical_analysis import bollinger, indicators as ind
 from apps.trade_approval.models import TradeProposal
+from apps.trade_history.chart import render_png
 from apps.trading import autorun
 from apps.trading.factory import trader_from_settings
 from apps.trading.gate_private import GateTradeError
@@ -27,6 +28,12 @@ from apps.trading.sync import sync_open_trades
 
 from .perf import performance
 from .backtest import TF_SEC, run as run_backtest
+
+try:
+    from apps.trade_history.analysis_image import render_analysis
+except ImportError:  # Pillow absent
+    def render_analysis(*a, **k):
+        raise ImportError("Pillow requis pour la photo d'analyse")
 from .scan import scan as run_scan
 
 TF_MAP = {"1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m", "1h": "1h", "4h": "4h", "8h": "8h", "1d": "1d", "1w": "7d"}
@@ -34,6 +41,7 @@ SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,20}_USDT$")
 HTF_MAP = {"1m": "15m", "5m": "1h", "15m": "4h", "30m": "4h", "1h": "4h", "4h": "1d", "8h": "1d", "1d": "1w", "1w": None}
 _bt_cache, _contracts_cache, _lv_cache = {}, {"t": 0, "data": []}, {}
 _fng_cache = {"t": 0.0, "v": None}
+_an_cache = {}
 
 
 def _pairs():
@@ -149,26 +157,30 @@ def _sentiment_data(sym):
     return data
 
 
-@login_required
-def scan_api(request):
-    sym, tf = _params(request)
-    if not sym:
-        return _err("Parametres invalides", 400)
-    try:
-        c = ind.normalize_candles(GateClient().candlesticks(sym, TF_MAP[tf], 300))
-    except (GateAPIError, ValueError, KeyError) as e:
-        return _err(f"DONNEES INDISPONIBLES : {e}")
-    htf = None
-    if HTF_MAP.get(tf):
-        try:
-            htf = ind.normalize_candles(GateClient().candlesticks(sym, TF_MAP[HTF_MAP[tf]], 200))[:-1]
-        except (GateAPIError, ValueError, KeyError):
-            htf = None  # unite superieure indisponible : le scan continue sans ce filtre
+def _lev_cap(request):
     try:
         lev = max(1, min(125, int(request.GET.get("lev", settings.KPS_DEFAULT_LEVERAGE))))
         cap = max(1.0, float(request.GET.get("cap", settings.KPS_DEFAULT_CAPITAL_USDT)))
     except ValueError:
         lev, cap = settings.KPS_DEFAULT_LEVERAGE, settings.KPS_DEFAULT_CAPITAL_USDT
+    return lev, cap
+
+
+def _analysis_bundle(sym, tf, lev, cap):
+    """Analyse REELLE et EN DIRECT d'une paire sur un timeframe (bougies Gate, jamais simulees). Mise en cache 15 s :
+    le scanner, la photo d'analyse et l'ordre pre-rempli partagent exactement le meme resultat."""
+    key = (sym, tf, lev, cap)
+    hit = _an_cache.get(key)
+    if hit and time.time() - hit[0] < 15:
+        return hit[1]
+    client = GateClient()
+    c = ind.normalize_candles(client.candlesticks(sym, TF_MAP[tf], 300))
+    htf = None
+    if HTF_MAP.get(tf):
+        try:
+            htf = ind.normalize_candles(client.candlesticks(sym, TF_MAP[HTF_MAP[tf]], 200))[:-1]
+        except (GateAPIError, ValueError, KeyError):
+            htf = None  # unite superieure indisponible : le scan continue sans ce filtre
     res = run_scan(c[:-1], sym, tf, {"min_score": settings.KPS_MIN_TECH_SCORE, "leverage": lev, "capital_usdt": cap},
                    htf_closed=htf)  # bougies CLOTUREES seulement
     res["htf"] = HTF_MAP.get(tf)
@@ -182,7 +194,79 @@ def scan_api(request):
             res[k] = float(f"{res[k]:.8g}")
     if "take_profits" in res:
         res["take_profits"] = [float(f"{x:.8g}") for x in res["take_profits"]]
-    return JsonResponse(res, json_dumps_params={"default": str})
+    try:
+        smc = overlays.build(c, tf_sec=TF_SEC[tf], levels=_levels(sym))
+    except Exception:
+        smc = None
+    bundle = {"candles": c, "result": res, "smc": smc}
+    _an_cache[key] = (time.time(), bundle)
+    return bundle
+
+
+@login_required
+def scan_api(request):
+    sym, tf = _params(request)
+    if not sym:
+        return _err("Parametres invalides", 400)
+    lev, cap = _lev_cap(request)
+    try:
+        bundle = _analysis_bundle(sym, tf, lev, cap)
+    except (GateAPIError, ValueError, KeyError) as e:
+        return _err(f"DONNEES INDISPONIBLES : {e}")
+    return JsonResponse(bundle["result"], json_dumps_params={"default": str})
+
+
+def _photo_bytes(sym, tf, lev, cap):
+    bundle = _analysis_bundle(sym, tf, lev, cap)
+    try:
+        return render_analysis(bundle["candles"], bundle["result"], bundle["smc"], sym, tf)
+    except ImportError:  # Pillow absent : rendu simple de secours
+        r = bundle["result"]
+        return render_png(bundle["candles"][:-1], entry=r.get("entry"), stop_loss=r.get("stop_loss"),
+                          take_profit=(r.get("take_profits") or [None, None])[1] if r.get("take_profits") else None,
+                          zones=None)
+
+
+@login_required
+def analysis_image_api(request):
+    """PHOTO D'ANALYSE annotee, calculee en direct sur les bougies reelles du timeframe demande."""
+    sym, tf = _params(request)
+    if not sym:
+        return _err("Parametres invalides", 400)
+    lev, cap = _lev_cap(request)
+    try:
+        png = _photo_bytes(sym, tf, lev, cap)
+    except (GateAPIError, ValueError, KeyError) as e:
+        return _err(f"DONNEES INDISPONIBLES : {e}")
+    resp = HttpResponse(png, content_type="image/png")
+    resp["Cache-Control"] = "no-store"
+    return resp
+
+
+@login_required
+@require_POST
+def analysis_image_send_api(request):
+    sym, tf = _params(request)
+    if not sym:
+        return _err("Parametres invalides", 400)
+    lev, cap = _lev_cap(request)
+    try:
+        png = _photo_bytes(sym, tf, lev, cap)
+        r = _analysis_bundle(sym, tf, lev, cap)["result"]
+    except (GateAPIError, ValueError, KeyError) as e:
+        return _err(f"DONNEES INDISPONIBLES : {e}")
+    cap_txt = f"{sym.replace('_', '/')} {tf.upper()} : {r.get('direction')} - {r.get('message', '')}"
+    ok = telegram.send_photo(png, cap_txt[:900])
+    return JsonResponse({"sent": bool(ok)}) if ok else _err("Envoi Telegram impossible (token / chat id ?)")
+
+
+@login_required
+def photos_page(request):
+    sym = request.GET.get("symbol", "BTC_USDT")
+    if not SYMBOL_RE.match(sym):
+        sym = "BTC_USDT"
+    lev, cap = _lev_cap(request)
+    return render(request, "photos.html", {"symbol": sym, "tfs": list(TF_MAP.keys()), "lev": lev, "cap": cap})
 
 
 @login_required

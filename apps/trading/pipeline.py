@@ -55,12 +55,15 @@ def build_proposal(symbol, c4h, c1h, c15, cfg=None, news=None, sentiment=None):
     tp = entry + cfg["reward_risk"] * dist if d == "LONG" else entry - cfg["reward_risk"] * dist
     # Setup ICT (OTE / FVG / OB / CHoCH) : s'il confirme la direction ET que le prix est dans la zone,
     # le stop et l'objectif viennent de la structure (origine de la jambe, liquidite, extension -27 %).
+    sign = 1 if d == "LONG" else -1
+    tps = [entry + sign * k * dist for k in (1.0, cfg["reward_risk"], cfg["reward_risk"] + 1.0)]
     htf = ict_lib.structure(c4h[:-1])["trend"] if len(c4h) > 45 else None
     setup = find_setup(c15[:-1], htf_trend=htf if htf in ("UP", "DOWN") else None)
     setup_reasons = []
     if setup and setup["direction"] == d and setup["status"] in ("zone", "profond"):
         sl, tp = setup["stop_loss"], setup["take_profits"][1]
         dist = abs(entry - sl)
+        tps = list(setup["take_profits"])
         setup_reasons = [f"Setup ICT grade {setup['grade']} ({setup['score']}/{setup['max']}) : " + ", ".join(setup["confluences"])] + setup["reasons"][:4]
     lev = min(int(cfg["leverage"]), int(cfg["max_leverage"]))
     liq = entry * (1 - 1 / lev) if d == "LONG" else entry * (1 + 1 / lev)
@@ -85,7 +88,7 @@ def build_proposal(symbol, c4h, c1h, c15, cfg=None, news=None, sentiment=None):
         "risks": ([f"Sentiment : {', '.join(sent['labels'])}"] if sent["labels"] else []) + ([f"Composantes indisponibles : {', '.join(conf['missing'])} (score normalise)"] if conf["partial"] else []) + [
                   f"Liquidation approx. vers {_r(liq)} (marge isolee x{lev}, hors frais)",
                   "Le stop (2 x ATR) et le gain (ratio %.1f) sont des suggestions modifiables" % cfg["reward_risk"]],
-        "mtf": a.get("mtf"), "ttl_minutes": cfg["ttl_minutes"],
+        "mtf": a.get("mtf"), "ttl_minutes": cfg["ttl_minutes"], "take_profits": [_r(x) for x in tps],
         "zones": a.get("zones"),
     }
     if not chk["allowed"]:

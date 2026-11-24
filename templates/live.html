@@ -8,7 +8,7 @@
   <link rel="apple-touch-icon" href="{% static 'images/nono-192.png' %}">
   <link rel="manifest" href="{% static 'manifest.webmanifest' %}">
   <meta name="theme-color" content="#0b1a3d">
-  <link rel="stylesheet" href="{% static 'css/live.css' %}?v=8">
+  <link rel="stylesheet" href="{% static 'css/live.css' %}?v=9">
   <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/lucide@0.469.0/dist/umd/lucide.min.js"></script>
 </head>
@@ -16,7 +16,7 @@
 {% csrf_token %}
 <div id="cfg" data-symbol="{{ symbol }}" data-ws="{{ ws_url }}" data-mode="{{ mode }}" data-emergency="{{ emergency|yesno:'1,0' }}"
      data-close="{% url 'live:close' 0 %}" data-logo="{% url 'live:logo' 'ZZZ' %}" data-lev="{{ default_leverage }}" data-cap="{{ default_capital }}"
-     data-urls='{"candles":"{% url 'live:candles' %}","scan":"{% url 'live:scan' %}","prices":"{% url 'live:prices' %}","account":"{% url 'live:account' %}","emergency":"{% url 'live:emergency' %}","performance":"{% url 'live:performance' %}","backtest":"{% url 'live:backtest' %}","contracts":"{% url 'live:contracts' %}","bot":"{% url 'live:bot' %}","botctl":"{% url 'live:bot_control' %}","create":"{% url 'market_scanner:create_trade' 'ZZZ' %}"}'></div>
+     data-urls='{"candles":"{% url 'live:candles' %}","scan":"{% url 'live:scan' %}","prices":"{% url 'live:prices' %}","account":"{% url 'live:account' %}","emergency":"{% url 'live:emergency' %}","performance":"{% url 'live:performance' %}","backtest":"{% url 'live:backtest' %}","contracts":"{% url 'live:contracts' %}","bot":"{% url 'live:bot' %}","botctl":"{% url 'live:bot_control' %}","create":"{% url 'market_scanner:create_trade' 'ZZZ' %}","image":"{% url 'live:analysis_image' %}","imagesend":"{% url 'live:analysis_image_send' %}","photos":"{% url 'live:photos' %}"}'></div>
 
 <header class="top">
   <div class="logo"><img src="{% static 'images/nono.png' %}" alt="KPS Trading Bot" class="logoimg" width="44" height="44" style="width:44px;height:44px"><div><div class="brand">KPS</div><div class="sub2">TRADING BOT</div></div></div>
@@ -99,6 +99,25 @@
     <div id="levels"></div>
     <div id="potential"></div>
     <div id="confl"></div>
+    <div class="pot" id="order">
+      <b><i data-lucide="target"></i> Ordre a preparer</b> <small id="order-src">En attente de l'analyse...</small>
+      <div class="ordgrid">
+        <label>Direction <select id="o-dir"><option>LONG</option><option>SHORT</option></select></label>
+        <label>Entree <input id="o-entry" type="number" step="any"></label>
+        <label>Stop Loss <input id="o-sl" type="number" step="any"></label>
+        <label>Take Profit <select id="o-tpsel"><option value="0">TP1</option><option value="1" selected>TP2</option><option value="2">TP3</option></select></label>
+        <label class="wide">Prix du TP <input id="o-tp" type="number" step="any"></label>
+      </div>
+      <small id="o-calc"></small>
+      <button id="btn-prep" class="primary" type="button">Creer l'ordre a confirmer</button>
+      <button id="btn-resync" type="button">Resynchroniser avec l'analyse</button>
+      <small>Aucun ordre n'est envoye : tu verifies puis tu confirmes sur la page EXECUTE TRADE.</small>
+    </div>
+    <div class="pot"><b><i data-lucide="camera"></i> Photo d'analyse (en direct)</b>
+      <img id="aimg" alt="Photo d'analyse" style="width:100%;border-radius:.5rem;margin-top:.4rem;display:none">
+      <div class="botbtns"><a id="aimg-open" href="#" target="_blank" rel="noopener">Ouvrir / telecharger</a><button id="aimg-send" type="button">Envoyer sur Telegram</button></div>
+      <a id="photos-link" href="#">Voir les photos de tous les timeframes</a>
+      <small id="live-badge">—</small></div>
     <div id="prep"></div>
     <div class="ach"><i data-lucide="chart-candlestick"></i> Analyse Technique</div>
     <div id="confirms"></div>
@@ -144,6 +163,6 @@
   <span class="market"><span class="dot" id="foot-dot"></span> Marches : <b id="foot-state">connexion...</b></span>
 </footer>
 <button id="fab-scan" class="fab" type="button"><i data-lucide="scan-search"></i> Scanner</button>
-<script src="{% static 'js/live.js' %}?v=8"></script>
+<script src="{% static 'js/live.js' %}?v=9"></script>
 </body>
 </html>

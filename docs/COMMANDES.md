@@ -50,3 +50,10 @@ A la premiere visite du site, un moteur d'arriere-plan analyse toutes les paires
 et envoie les resultats sur Telegram. Sur la page /live/ : bloc "Bot d'analyse automatique" (Demarrer / Arreter / Analyser maintenant).
 KPS_AUTORUN=false desactive ce moteur (alors : python manage.py run_bot). Un seul moteur tourne a la fois (verrou en base).
 Render gratuit : le service s'endort sans visite -> l'analyse s'arrete ; un worker (payant) ou un ping regulier la garde active.
+
+## Photo d'analyse annotee + ordre pre-rempli (en direct)
+Sur /live/ : choisis une paire et un timeframe -> l'analyse se lance TOUTE SEULE (puis a chaque nouvelle bougie et toutes les 30 s).
+- Photo d'analyse : bougies reelles, Bollinger, support/resistance, FVG, zone d'entree, liquidite Buy/Sell-Side, CHoCH, SL, TP1-TP3, legende.
+- "Ordre a preparer" : direction, entree, Stop Loss et Take Profit sont remplis automatiquement depuis l'analyse du timeframe choisi (modifiable).
+- /live/photos/ : la photo d'analyse de TOUS les timeframes (1m a 1W), actualisee toutes les 60 s ; envoi possible sur Telegram.
+Pillow est requis (pip install -r requirements.txt ; sous Termux : pkg install python-pillow).

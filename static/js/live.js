@@ -194,7 +194,8 @@
     var p = prices[state.symbol];
     if (p) { var e = $("head-chg"); e.textContent = (p.change >= 0 ? "+" : "") + p.change.toFixed(2) + "%"; e.className = p.change >= 0 ? "up" : "down"; }
   }
-  function load() { msg("Chargement..."); headInfo(); clearScan(); clearDrawings(); fetchAndPaint().then(connectLive); }
+  function scheduleScan(delay) { clearTimeout(scanTimer); scanTimer = setTimeout(function () { scan(!!lastScan && lastScan.symbol === state.symbol && lastScan.timeframe === state.tf); }, delay); }
+  function load() { msg("Chargement..."); headInfo(); clearScan(); clearDrawings(); orderDirty = false; lastScan = null; lastBarTime = null; fetchAndPaint().then(connectLive); scheduleScan(500); }
 
   // ---- duree restante avant la cloture de la bougie en cours ----
   var cdRefreshed = 0;
@@ -220,6 +221,8 @@
   function stopLive() { if (state.ws) { state.ws.onclose = null; try { state.ws.close(); } catch (e) {} state.ws = null; } state.wsOk = false; }
   function applyCandle(c) {
     candle.update(c); vol.update({ time: c.time, value: c.volume, color: c.close >= c.open ? "#26a69a66" : "#ef535066" });
+    if (lastBarTime !== null && c.time !== lastBarTime) scheduleScan(1500);  // nouvelle bougie : on relance l'analyse
+    lastBarTime = c.time;
     L.ohlc = c; L.vol = c.volume; $("last").textContent = f(c.close); paintLegend(L);
   }
   var paintQueued = false;
@@ -283,7 +286,7 @@
     h += '<small>Probabilite de reussite : cliquer sur « Reussite historique » (calculee sur des donnees reelles, jamais inventee).</small></div>';
     $("potential").innerHTML = h;
   }
-  $("in-cap").oninput = renderPotential; $("in-lev").oninput = renderPotential;
+  $("in-cap").oninput = function () { renderPotential(); orderCalc(); }; $("in-lev").oninput = function () { renderPotential(); orderCalc(); };
   function renderConfluence(r) {
     var h = "";
     if (r.confluence) {
@@ -301,25 +304,61 @@
     }
     $("confl").innerHTML = h;
   }
-  function renderPrep(r) {
-    if (r.entry === undefined) { $("prep").innerHTML = ""; return; }
-    $("prep").innerHTML = '<button id="btn-prep" class="primary" type="button">Preparer ce trade (page EXECUTE TRADE)</button><small>Aucun ordre n\'est envoye : tu verifies entree, SL, TP puis tu confirmes sur la page suivante.</small>';
-    $("btn-prep").onclick = function () {
-      var form = document.createElement("form"); form.method = "post"; form.action = URLS.create.replace("ZZZ", r.symbol);
-      var fields = { csrfmiddlewaretoken: csrf, direction: r.direction, entry: r.entry, stop_loss: r.stop_loss, take_profit: r.take_profits[1],
-        capital_usdt: $("in-cap").value, leverage: $("in-lev").value };
-      Object.keys(fields).forEach(function (k) { var i = document.createElement("input"); i.type = "hidden"; i.name = k; i.value = fields[k]; form.appendChild(i); });
-      document.body.appendChild(form); form.submit();
-    };
+  var orderDirty = false, lastScanAt = 0, scanTimer = null, lastBarTime = null;
+  function setOrder(vals, auto) {
+    ["entry", "sl", "tp"].forEach(function (k) { var el = $("o-" + k); el.value = vals[k] === undefined || vals[k] === null ? "" : vals[k]; el.classList.toggle("auto", !!auto && vals[k] !== undefined && vals[k] !== null); });
+    if (vals.dir) $("o-dir").value = vals.dir;
   }
+  function orderCalc() {
+    var e = parseFloat($("o-entry").value), sl = parseFloat($("o-sl").value), tp = parseFloat($("o-tp").value);
+    var lev = Math.max(1, parseFloat($("in-lev").value) || 1), cap = Math.max(1, parseFloat($("in-cap").value) || 1), sign = $("o-dir").value === "LONG" ? 1 : -1;
+    if (!(e > 0 && sl > 0 && tp > 0)) { $("o-calc").textContent = ""; return; }
+    var g = sign * (tp - e) / e * 100, l = sign * (sl - e) / e * 100, risk = Math.abs(e - sl);
+    var ok = (sign === 1 ? sl < e && tp > e : sl > e && tp < e);
+    $("o-calc").innerHTML = ok ? 'Gain <b class="up">' + pct(g * lev) + " marge (≈ " + usdt(cap * g * lev / 100) + ')</b> · Perte <b class="down">' + pct(l * lev) + " (≈ " + usdt(cap * l * lev / 100) + ")</b> · R " + (Math.abs(tp - e) / risk).toFixed(2)
+      : '<span class="down">SL / TP du mauvais cote de l\'entree.</span>';
+  }
+  function renderPrep(r, live) {
+    var tpi = parseInt($("o-tpsel").value, 10);
+    if (r.entry === undefined) {
+      if (!orderDirty) { setOrder({ entry: null, sl: null, tp: null }, false); }
+      $("order-src").textContent = "Aucun niveau : " + (r.message || "ATTENTE") + " (rien a pre-remplir)"; orderCalc(); return;
+    }
+    if (!orderDirty) {
+      setOrder({ dir: r.direction, entry: r.entry, sl: r.stop_loss, tp: r.take_profits[tpi] }, true);
+      $("order-src").textContent = "Rempli automatiquement depuis l'analyse " + r.timeframe.toUpperCase() + (r.entry_mode === "attente" ? " (entree LIMITE)" : "") + " — modifiable";
+    } else { $("order-src").textContent = "Modifie manuellement (l'analyse continue en direct) — « Resynchroniser » pour reprendre ses niveaux"; }
+    orderCalc();
+  }
+  ["o-dir", "o-entry", "o-sl", "o-tp"].forEach(function (id) { $(id).oninput = function () { orderDirty = true; orderCalc(); }; });
+  $("o-tpsel").onchange = function () { if (lastScan && lastScan.take_profits) { $("o-tp").value = lastScan.take_profits[parseInt($("o-tpsel").value, 10)]; orderCalc(); } };
+  $("btn-resync").onclick = function () { orderDirty = false; if (lastScan) renderPrep(lastScan); };
+  $("btn-prep").onclick = function () {
+    if (!($("o-entry").value && $("o-sl").value && $("o-tp").value)) { alert("Entree, Stop Loss et Take Profit sont necessaires."); return; }
+    var form = document.createElement("form"); form.method = "post"; form.action = URLS.create.replace("ZZZ", state.symbol);
+    var fields = { csrfmiddlewaretoken: csrf, direction: $("o-dir").value, entry: $("o-entry").value, stop_loss: $("o-sl").value, take_profit: $("o-tp").value,
+      capital_usdt: $("in-cap").value, leverage: $("in-lev").value };
+    Object.keys(fields).forEach(function (k) { var i = document.createElement("input"); i.type = "hidden"; i.name = k; i.value = fields[k]; form.appendChild(i); });
+    document.body.appendChild(form); form.submit();
+  };
+  function qs() { return "?symbol=" + state.symbol + "&tf=" + state.tf + "&lev=" + encodeURIComponent($("in-lev").value) + "&cap=" + encodeURIComponent($("in-cap").value); }
+  function refreshPhoto() {
+    var im = $("aimg"); im.style.display = "block"; im.src = URLS.image + qs() + "&t=" + Date.now();
+    $("aimg-open").href = URLS.image + qs(); $("aimg-open").setAttribute("download", "analyse_" + state.symbol + "_" + state.tf + ".png");
+    $("photos-link").href = URLS.photos + "?symbol=" + state.symbol;
+  }
+  $("aimg-send").onclick = function () {
+    var b = $("aimg-send"); b.disabled = true;
+    fetch(URLS.imagesend + qs(), { method: "POST", headers: { "X-CSRFToken": csrf } }).then(function (r) { return r.json().then(function (j) { alert(r.ok ? "Photo envoyee sur Telegram" : (j.error || "Erreur")); }); }).finally(function () { b.disabled = false; });
+  };
   function drawIct(r) {
     var z = r.ict; if (!z) return;
     var long = z.direction === "LONG";
     addLine(z.zone[1], "#a78bfa", long ? "OTE 62%" : "OTE 79%", 2); addLine(z.zone[0], "#a78bfa", long ? "OTE 79%" : "OTE 62%", 2);
     addLine(z.equilibrium, "#64748b", "50% (equilibre)", 2); addLine(z.invalidation, "#fb923c", "Invalidation", 2);
   }
-  function scan() {
-    $("signal").className = "signal wait"; $("signal").innerHTML = "<b>Analyse...</b>"; $("bt").innerHTML = "";
+  function scan(silent) {
+    if (!silent) { $("signal").className = "signal wait"; $("signal").innerHTML = "<b>Analyse...</b>"; $("bt").innerHTML = ""; }
     var q = "&lev=" + encodeURIComponent($("in-lev").value) + "&cap=" + encodeURIComponent($("in-cap").value);
     api(URLS.scan + "?symbol=" + state.symbol + "&tf=" + state.tf + q).then(function (r) {
       clearScan(); lastScan = r;
@@ -348,13 +387,13 @@
       var z = r.ict;
       $("ict").innerHTML = z ? '<div class="ictbox"><b>Setup ICT · grade ' + z.grade + " (" + z.score + "/" + z.max + ")</b><div>" +
         z.confluences.map(function (x) { return '<span class="chip">' + x + "</span>"; }).join("") + "</div><small>" + z.reasons.slice(0, 4).join("<br>") + "</small></div>" : "";
-      renderPotential(); renderConfluence(r); renderPrep(r);
+      renderPotential(); renderConfluence(r); renderPrep(r); refreshPhoto(); lastScanAt = Date.now();
       $("confirms").innerHTML = (r.confirmations || []).map(function (c) {
         return '<div class="conf"><span>' + c.name + " : " + (c.value === null ? "—" : c.value) + "</span><span>" + c.verdict + "</span></div>";
       }).join("");
       icons();
       $("scan-time").textContent = "Calcule le " + r.timestamp.replace("T", " ").replace("+00:00", " UTC") + " · bougies cloturees · " + r.market;
-    }).catch(function (e) { $("signal").className = "signal wait"; $("signal").innerHTML = "<b>Indisponible</b><small>" + e.message + "</small>"; });
+    }).catch(function (e) { if (!silent) { $("signal").className = "signal wait"; $("signal").innerHTML = "<b>Indisponible</b><small>" + e.message + "</small>"; } else { $("live-badge").textContent = "Mise a jour impossible : " + e.message; } });
   }
   $("btn-backtest").onclick = function () {
     $("bt").innerHTML = "<small>Calcul sur l'historique reel... (quelques secondes)</small>";
@@ -370,7 +409,7 @@
     }).catch(function (e) { $("bt").innerHTML = "<small class='down'>" + e.message + "</small>"; });
   };
   var autoTimer = null;
-  $("auto").onchange = function () { if (autoTimer) { clearInterval(autoTimer); autoTimer = null; } if ($("auto").checked) { scan(); autoTimer = setInterval(scan, 60000); } };
+  $("auto").onchange = function () { if (autoTimer) { clearInterval(autoTimer); autoTimer = null; } if ($("auto").checked) { scan(false); autoTimer = setInterval(function () { scan(true); }, 60000); } };
 
   // ---- outils de dessin (ligne horizontale, ligne de tendance, annuler / retablir) ----
   var tool = null, pending = null, drawings = [], redo = [];
@@ -485,9 +524,9 @@
   }; });
 
   // ---- barre d'outils ----
-  $("btn-scan").onclick = scan;
-  $("fab-scan").onclick = function () { scan(); $("scanpanel").scrollIntoView({ behavior: "smooth", block: "start" }); };
-  $("btn-refresh").onclick = function () { fetchAndPaint(); loadPrices(); loadPerf(); loadAccount(); scan(); };
+  $("btn-scan").onclick = function () { scan(false); };
+  $("fab-scan").onclick = function () { scan(false); $("scanpanel").scrollIntoView({ behavior: "smooth", block: "start" }); };
+  $("btn-refresh").onclick = function () { fetchAndPaint(); loadPrices(); loadPerf(); loadAccount(); scan(false); };
   $("btn-shot").onclick = function () { var c = chart.takeScreenshot(), a = document.createElement("a"); a.href = c.toDataURL("image/png"); a.download = state.symbol + "_" + state.tf + ".png"; a.click(); };
   function zoom(factor) {
     var r = chart.timeScale().getVisibleLogicalRange(); if (!r) return;
@@ -552,6 +591,11 @@
   $("perf-days").onchange = loadPerf;
 
   icons(); paintLegend({});
+  setInterval(function () {   // analyse en direct : toutes les 30 s tant que la page est visible
+    if (document.visibilityState === "visible" && Date.now() - lastScanAt > 29000) scan(true);
+    var sec = lastScanAt ? Math.round((Date.now() - lastScanAt) / 1000) : null;
+    $("live-badge").textContent = sec === null ? "Analyse en cours..." : "● Analyse reelle en direct · mise a jour il y a " + sec + " s (bougies cloturees, Gate Futures USDT)";
+  }, 5000);
   load(); loadContracts(); loadPrices(); loadAccount(); loadPerf(); resizeAll();
   setInterval(loadPrices, 10000); setInterval(loadContracts, 300000); setInterval(loadAccount, 30000); setInterval(loadPerf, 60000);
 })();

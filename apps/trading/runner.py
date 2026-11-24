@@ -120,6 +120,24 @@ class BotRunner:
         self.news_cache[sym] = (time.time(), res)
         return res
 
+    def photo(self, c15, res, p, a):
+        """Photo d'analyse annotee (Pillow) ; image simple de secours si Pillow est absent."""
+        try:
+            from apps.smart_money import overlays
+            from apps.trade_history.analysis_image import render_analysis
+            if p:
+                r = {"direction": p["direction"], "entry": p["entry"], "stop_loss": p["stop_loss"], "take_profits": p.get("take_profits"),
+                     "confluence": p.get("confluence"), "score": a["score"], "max_score": 40, "message": f"Proposition {p['direction']}"}
+            else:
+                reason = res.get("reason") or "; ".join(res.get("violations", [])) or "aucun signal"
+                r = {"direction": "ATTENTE", "message": f"ATTENTE : {reason}", "score": a["score"], "max_score": 40,
+                     "confluence": res.get("confluence")}
+            r["timestamp"] = timezone.now().strftime("%Y-%m-%dT%H:%M:%S")
+            return render_analysis(c15, r, overlays.build(c15, tf_sec=900), p["symbol"] if p else res.get("symbol", ""), "15m")
+        except (ImportError, ValueError):
+            return render_png(c15[:-1], entry=p and p["entry"], stop_loss=p and p["stop_loss"],
+                              take_profit=p and p["take_profit"], zones=a.get("zones"))
+
     # ---- sentiment : Fear & Greed (cache 1 h) + funding + statistiques futures Gate ----
     def get_sentiment(self, client, sym, ticker):
         if time.time() - self.fng[0] > 3600:
@@ -171,12 +189,12 @@ class BotRunner:
             tk = by_ticker.get(sym, {})
             res = build_proposal(sym, tf["4h"], tf["1h"], tf["15m"], cfg, news=news, sentiment=self.get_sentiment(client, sym, tk))
             a, f = res["analysis"], res["fundamental"]
+            res.setdefault("symbol", sym)
             price = float(tk["last"]) if tk.get("last") else tf["15m"][-2]["c"]
             chg = float(tk["change_percentage"]) if tk.get("change_percentage") else None
             rows.append({"symbol": sym, "price": price, "change_pct": chg, "direction": a["direction"], "score": a["score"]})
             p = res.get("proposal") if res["status"] == "proposal" else None
-            png = render_png(tf["15m"][:-1], entry=p and p["entry"], stop_loss=p and p["stop_loss"],
-                             take_profit=p and p["take_profit"], zones=a.get("zones"))
+            png = self.photo(tf["15m"], res, p, a)
             if res["status"] == "blocked":
                 self.log(f"{sym} : BLOQUE : {'; '.join(res['violations'])}")
             elif res["status"] == "none":
